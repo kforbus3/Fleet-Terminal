@@ -25,6 +25,7 @@ import (
 	"github.com/fleet-terminal/backend/internal/ca"
 	"github.com/fleet-terminal/backend/internal/certificates"
 	"github.com/fleet-terminal/backend/internal/config"
+	"github.com/fleet-terminal/backend/internal/enrollment"
 	"github.com/fleet-terminal/backend/internal/hosts"
 	"github.com/fleet-terminal/backend/internal/identity"
 	"github.com/fleet-terminal/backend/internal/metrics"
@@ -193,6 +194,9 @@ func (s *Server) registerRoutes(r chi.Router) {
 
 	// M5 — SSH gateway browser terminal.
 	terminal.Mount(r, deps, s.Gateway)
+
+	// M8 — host enrollment (WireGuard provisioning + trust).
+	enrollment.Mount(r, deps, enrollment.New(s.Store, s.Cfg, s.Log, s.Gateway))
 
 	// Orchestrated modules (admin, audit, sessions, approvals).
 	admin.Mount(r, deps)

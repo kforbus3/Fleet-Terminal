@@ -91,3 +91,23 @@ export async function getHostStatusStats(): Promise<HostStatusStats> {
   const { data } = await api.get<HostStatusStats>("/api/v1/hosts/stats/status");
   return data;
 }
+
+export interface EnrollmentStep {
+  name: string;
+  status: string;
+  detail?: string;
+  timestamp: string;
+}
+
+export interface EnrollmentResult {
+  job: { id: string; status: string; steps: EnrollmentStep[]; error?: string };
+  wgAddress: string;
+  hostPublicKey: string;
+}
+
+// Enroll provisions the WireGuard tunnel (jump-host peer + host interface) and
+// trust for a host, then brings the interface up.
+export async function enrollHost(id: string): Promise<EnrollmentResult> {
+  const { data } = await api.post<EnrollmentResult>(`/api/v1/hosts/${id}/enroll`);
+  return data;
+}

@@ -23,6 +23,10 @@ up: env ## Build & start the full stack + test fabric
 up-app: env ## Start only the application stack (no test fabric)
 	$(COMPOSE) up -d --build
 
+.PHONY: trust
+trust: ## Seed the test-fabric nodes with the backend's CA (run once after `make up`)
+	@bash scripts/install-ca.sh
+
 .PHONY: down
 down: ## Stop the stack
 	$(COMPOSE_FABRIC) down

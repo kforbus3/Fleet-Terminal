@@ -102,6 +102,37 @@ func (g *Gateway) DialHost(handle, host string, port int, user string) (any, err
 	return g.Dial(context.Background(), handle, host, port, user)
 }
 
+// DialDirect opens an SSH connection straight to addr:port using the session's
+// ephemeral certificate, bypassing the jump host. Enrollment uses this to reach
+// the jump host itself and a host that is not yet on the WireGuard overlay.
+func (g *Gateway) DialDirect(ctx context.Context, sessionID, addr string, port int, user string) (*ssh.Client, error) {
+	cred, ok := g.vaultLookup(sessionID)
+	if !ok {
+		return nil, fmt.Errorf("no live credential for session")
+	}
+	signer := cred.CertSigner()
+	if signer == nil {
+		return nil, fmt.Errorf("session credential unavailable")
+	}
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+	d := net.Dialer{Timeout: 10 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(addr, fmt.Sprintf("%d", port)))
+	if err != nil {
+		return nil, fmt.Errorf("dial %s:%d: %w", addr, port, err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("ssh handshake with %s: %w", addr, err)
+	}
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
 func (g *Gateway) vaultLookup(sessionID string) (*identity.Credential, bool) {
 	id, err := uuid.Parse(sessionID)
 	if err != nil {

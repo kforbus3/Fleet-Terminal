@@ -6,6 +6,7 @@ package terminal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -91,21 +92,33 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 
 // run drives a single terminal session lifecycle.
 func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal, host *models.Host) {
-	// Resolve the address the gateway dials: prefer the WireGuard address.
-	dialHost := host.WGAddress
-	if dialHost == "" {
-		dialHost = host.Address
-	}
-	if dialHost == "" {
-		dialHost = host.Hostname
+	// Candidate addresses the gateway dials through the jump host, in order of
+	// preference: the WireGuard overlay address first, then the management
+	// address / hostname as a fallback (useful where the overlay data plane is
+	// unavailable, e.g. the local userspace-WireGuard test fabric).
+	var candidates []string
+	for _, a := range []string{host.WGAddress, host.Address, host.Hostname} {
+		if a != "" && !contains(candidates, a) {
+			candidates = append(candidates, a)
+		}
 	}
 
 	sendErr := func(msg string) {
 		_ = ws.WriteMessage(websocket.TextMessage, mustJSON(controlMsg{Type: "error", Data: msg}))
 	}
 
-	gwConn, err := h.gw.Dial(ctx, p.SessionID.String(), dialHost, host.SSHPort, host.SSHUser)
-	if err != nil {
+	var gwConn *sshgw.Conn
+	var err error
+	for _, addr := range candidates {
+		gwConn, err = h.gw.Dial(ctx, p.SessionID.String(), addr, host.SSHPort, host.SSHUser)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil || gwConn == nil {
+		if err == nil {
+			err = fmt.Errorf("no reachable address for host")
+		}
 		sendErr("connection failed: " + err.Error())
 		return
 	}
@@ -253,6 +266,15 @@ func recordingInput(sshSessionID uuid.UUID, res recorder.Result) store.Recording
 		SSHSessionID: sshSessionID, Format: "asciicast-v2", Path: res.Path,
 		SizeBytes: res.SizeBytes, DurationMS: res.DurationMS, SHA256: res.SHA256,
 	}
+}
+
+func contains(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func mustJSON(v any) []byte {

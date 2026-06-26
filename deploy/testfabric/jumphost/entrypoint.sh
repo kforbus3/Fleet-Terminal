@@ -1,63 +1,41 @@
 #!/bin/sh
 # Fleet Terminal test fabric — jump host entrypoint.
 #
-# Brings up the userspace WireGuard hub (wg0) then starts sshd in the
-# foreground. WireGuard public keys are exchanged with the managed hosts
-# through the shared /wgkeys volume.
+# Brings up the userspace WireGuard hub (wg0) with a stable keypair, then starts
+# sshd. Managed-host *peers are NOT configured here* — the Fleet Terminal
+# enrollment flow adds each peer dynamically (wg set) when a host is enrolled.
 set -e
 
-WG_DIR=/wgkeys
-WG_IFACE=wg0
-WG_PORT=51820
+WG_IFACE="${WG_INTERFACE:-wg0}"
+WG_PORT="${WG_PORT:-51820}"
 WG_ADDR="${WG_ADDRESS:-10.100.0.1/24}"
-SELF_NAME="${WG_NAME:-jumphost}"
 
-# Managed-host spokes: name:wg-ip pairs the hub must peer with.
-PEERS="${WG_PEERS:-host-ubuntu:10.100.0.21 host-rocky:10.100.0.22}"
-
-mkdir -p "$WG_DIR" /etc/wireguard /run/sshd
+mkdir -p /etc/wireguard /run/sshd
 umask 077
 
-# Generate a persistent keypair on first boot.
+# Generate a persistent keypair on first boot; the backend reads the public key
+# over SSH (/etc/wireguard/publickey) during enrollment.
 if [ ! -f /etc/wireguard/privatekey ]; then
   wg genkey > /etc/wireguard/privatekey
   wg pubkey < /etc/wireguard/privatekey > /etc/wireguard/publickey
 fi
 
-# Publish our public key so the spokes can discover the hub.
-cp /etc/wireguard/publickey "$WG_DIR/${SELF_NAME}.pub"
-
-# Start userspace WireGuard (daemonizes; uses /dev/net/tun).
-echo "[jumphost] starting wireguard-go on ${WG_IFACE}"
+echo "[jumphost] starting userspace WireGuard hub on ${WG_IFACE}"
 wireguard-go "$WG_IFACE"
 
-# Wait for the userspace control socket to be ready.
+# Wait for the userspace control socket.
 i=0
 while [ "$i" -lt 15 ]; do
   if wg show "$WG_IFACE" >/dev/null 2>&1; then break; fi
-  i=$((i + 1))
-  sleep 1
+  i=$((i + 1)); sleep 1
 done
 
 wg set "$WG_IFACE" listen-port "$WG_PORT" private-key /etc/wireguard/privatekey
-ip address add "$WG_ADDR" dev "$WG_IFACE"
+ip address add "$WG_ADDR" dev "$WG_IFACE" 2>/dev/null || true
 ip link set "$WG_IFACE" up
-
-# Add every managed-host peer once its public key appears.
-for entry in $PEERS; do
-  name="${entry%%:*}"
-  wgip="${entry##*:}"
-  echo "[jumphost] waiting for ${name}.pub ..."
-  while [ ! -s "$WG_DIR/${name}.pub" ]; do sleep 1; done
-  pub="$(cat "$WG_DIR/${name}.pub")"
-  wg set "$WG_IFACE" peer "$pub" \
-    allowed-ips "${wgip}/32" \
-    endpoint "${name}:${WG_PORT}" \
-    persistent-keepalive 25
-  echo "[jumphost] peered with ${name} (${wgip})"
-done
+echo "[jumphost] wg0 up at ${WG_ADDR}; peers added on demand by enrollment"
 
 # Ensure host keys exist, then run sshd in the foreground.
-ssh-keygen -A
+ssh-keygen -A >/dev/null 2>&1 || true
 echo "[jumphost] starting sshd"
 exec /usr/sbin/sshd -D -e

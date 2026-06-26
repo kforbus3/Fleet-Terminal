@@ -48,6 +48,13 @@ type Config struct {
 	JumpUser           string
 	JumpKnownHostsFile string
 
+	// WireGuard overlay (used by host enrollment to provision tunnels)
+	WGInterface    string // e.g. "wg0"
+	WGSubnet       string // CIDR of the overlay, e.g. "10.100.0.0/24"
+	WGJumpIP       string // jump host's address on the overlay
+	WGJumpEndpoint string // endpoint managed hosts dial to reach the jump, host:port
+	WGPort         int    // WireGuard listen port on managed hosts
+
 	// Session recordings storage
 	RecordingDir string
 
@@ -85,6 +92,11 @@ func Load() (*Config, error) {
 		JumpHost:           env("FLEET_JUMP_HOST", "jumphost:22"),
 		JumpUser:           env("FLEET_JUMP_USER", "fleet"),
 		JumpKnownHostsFile: env("FLEET_JUMP_KNOWN_HOSTS", ""),
+		WGInterface:        env("FLEET_WG_INTERFACE", "wg0"),
+		WGSubnet:           env("FLEET_WG_SUBNET", "10.100.0.0/24"),
+		WGJumpIP:           env("FLEET_WG_JUMP_IP", "10.100.0.1"),
+		WGJumpEndpoint:     env("FLEET_WG_JUMP_ENDPOINT", "jumphost:51820"),
+		WGPort:             envInt("FLEET_WG_PORT", 51820),
 		RecordingDir:       env("FLEET_RECORDING_DIR", "/var/lib/fleet/recordings"),
 		LogLevel:           env("FLEET_LOG_LEVEL", "info"),
 		LogFormat:          env("FLEET_LOG_FORMAT", "json"),

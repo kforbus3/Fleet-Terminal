@@ -19,13 +19,17 @@ RUN apt-get update \
       wireguard-tools \
       iproute2 \
       iptables \
+      sudo \
       ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=wgbuild /src/wireguard-go /usr/local/bin/wireguard-go
 
-# Unprivileged login user that the fleet CA-signed certificates map to.
-RUN useradd -m -s /bin/bash fleet
+# Login user that the fleet CA-signed certificates map to. Passwordless sudo so
+# the enrollment flow can add WireGuard peers (wg set) on the jump host.
+RUN useradd -m -s /bin/bash fleet \
+ && echo 'fleet ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/fleet \
+ && chmod 0440 /etc/sudoers.d/fleet
 
 # sshd privilege-separation dir, principals mapping, and the fleet CA
 # placeholder that the enrollment flow replaces with the real CA pubkey.

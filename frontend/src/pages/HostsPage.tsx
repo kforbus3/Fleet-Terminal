@@ -10,9 +10,12 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import CableIcon from "@mui/icons-material/Cable";
+import { Alert, CircularProgress, List, ListItem, ListItemText } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createHost, deleteHost, listHosts, type Host, type HostInput,
+  createHost, deleteHost, enrollHost, listHosts,
+  type EnrollmentResult, type Host, type HostInput,
 } from "../api/hosts";
 
 const STATUS_COLOR: Record<string, "success" | "error" | "warning" | "default"> = {
@@ -152,12 +155,32 @@ export function HostsPage() {
 
   const [selection, setSelection] = useState<GridRowSelectionModel>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [enrollResult, setEnrollResult] = useState<EnrollmentResult | null>(null);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [enrollOpen, setEnrollOpen] = useState(false);
 
   const createMut = useMutation({
     mutationFn: createHost,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["hosts"] });
       setDialogOpen(false);
+    },
+  });
+
+  const enrollMut = useMutation({
+    mutationFn: enrollHost,
+    onMutate: () => {
+      setEnrollOpen(true);
+      setEnrollResult(null);
+      setEnrollError(null);
+    },
+    onSuccess: (res) => {
+      setEnrollResult(res);
+      void qc.invalidateQueries({ queryKey: ["hosts"] });
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: { error?: string } } };
+      setEnrollError(e.response?.data?.error ?? "Enrollment failed.");
     },
   });
 
@@ -223,19 +246,33 @@ export function HostsPage() {
       valueFormatter: (value) => fmtDate(value ? String(value) : undefined),
     },
     {
-      field: "actions", headerName: "Actions", width: 90, sortable: false, filterable: false,
+      field: "actions", headerName: "Actions", width: 130, sortable: false, filterable: false,
       renderCell: (params) => (
-        <Tooltip title="Delete host">
-          <IconButton
-            size="small" color="error"
-            onClick={() => deleteMut.mutate([params.row.id])}
-          >
-            <DeleteIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        <Stack direction="row" spacing={0.5}>
+          <Tooltip title={params.row.enrolled ? "Re-enroll (provision WireGuard)" : "Enroll (provision WireGuard)"}>
+            <span>
+              <IconButton
+                size="small"
+                color={params.row.enrolled ? "success" : "primary"}
+                disabled={enrollMut.isPending}
+                onClick={() => enrollMut.mutate(params.row.id)}
+              >
+                <CableIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Delete host">
+            <IconButton
+              size="small" color="error"
+              onClick={() => deleteMut.mutate([params.row.id])}
+            >
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
       ),
     },
-  ], [deleteMut]);
+  ], [deleteMut, enrollMut]);
 
   const rows = data?.hosts ?? [];
 
@@ -277,6 +314,66 @@ export function HostsPage() {
         onSubmit={(input) => createMut.mutate(input)}
         submitting={createMut.isPending}
       />
+      <EnrollDialog
+        open={enrollOpen}
+        pending={enrollMut.isPending}
+        result={enrollResult}
+        error={enrollError}
+        onClose={() => setEnrollOpen(false)}
+      />
     </Box>
+  );
+}
+
+// EnrollDialog streams the enrollment job's step results (provisioning the
+// WireGuard peer on the jump host, the interface on the host, and verification).
+interface EnrollDialogProps {
+  open: boolean;
+  pending: boolean;
+  result: EnrollmentResult | null;
+  error: string | null;
+  onClose: () => void;
+}
+
+function EnrollDialog({ open, pending, result, error, onClose }: EnrollDialogProps) {
+  const stepColor = (s: string) =>
+    s === "ok" ? "success.main" : s === "failed" ? "error.main" : "text.secondary";
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Host enrollment</DialogTitle>
+      <DialogContent dividers>
+        {pending && (
+          <Stack direction="row" spacing={2} alignItems="center" sx={{ py: 2 }}>
+            <CircularProgress size={22} />
+            <Typography>Provisioning WireGuard and trust over SSH…</Typography>
+          </Stack>
+        )}
+        {error && <Alert severity="error">{error}</Alert>}
+        {result && (
+          <>
+            <Alert severity="success" sx={{ mb: 2 }}>
+              Enrolled. Overlay address <b>{result.wgAddress}</b>; interface up on the host.
+            </Alert>
+            <List dense>
+              {result.job.steps.map((st, i) => (
+                <ListItem key={i} disableGutters>
+                  <ListItemText
+                    primary={
+                      <Typography sx={{ color: stepColor(st.status) }}>
+                        {st.status === "ok" ? "✓" : st.status === "failed" ? "✗" : "•"} {st.name}
+                      </Typography>
+                    }
+                    secondary={st.detail}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          </>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={pending}>Close</Button>
+      </DialogActions>
+    </Dialog>
   );
 }
