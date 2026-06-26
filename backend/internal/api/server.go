@@ -14,9 +14,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/fleet-terminal/backend/internal/app"
 	"github.com/fleet-terminal/backend/internal/auth"
 	"github.com/fleet-terminal/backend/internal/bootstrap"
 	"github.com/fleet-terminal/backend/internal/config"
+	"github.com/fleet-terminal/backend/internal/hosts"
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/store"
 )
@@ -87,9 +89,25 @@ func (s *Server) registerRoutes(r chi.Router) {
 		writeJSON(w, http.StatusOK, map[string]string{"pong": "ok"})
 	})
 
+	deps := &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log, Auth: s.Auth}
+
 	// M2 — first-run wizard + authentication.
 	bootstrap.NewHandler(s.Store, s.Cfg).Mount(r)
 	auth.NewHandler(s.Auth).Mount(r)
+
+	// M3 — host inventory.
+	hosts.Mount(r, deps)
+
+	// Additional modules (admin, audit, approvals, terminal, …) mount here as
+	// they are integrated.
+	s.mountModules(r, deps)
+}
+
+// mountModules is the integration seam for modules delivered by the orchestrated
+// build. It is defined in modules.go so generated wiring stays isolated.
+func (s *Server) mountModules(r chi.Router, d *app.Deps) {
+	_ = r
+	_ = d
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

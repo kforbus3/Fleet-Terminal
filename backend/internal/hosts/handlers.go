@@ -1,0 +1,207 @@
+// Package hosts provides host inventory CRUD and serves as the canonical example
+// of a Fleet Terminal HTTP module: construct from *app.Deps, gate every route
+// with auth + RBAC middleware, and audit state changes.
+package hosts
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/fleet-terminal/backend/internal/app"
+	"github.com/fleet-terminal/backend/internal/auth"
+	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/fleet-terminal/backend/internal/store"
+)
+
+// Mount attaches host routes to r, gated by authentication and permissions.
+func Mount(r chi.Router, d *app.Deps) {
+	h := &handler{d: d}
+	r.Group(func(pr chi.Router) {
+		pr.Use(d.Auth.RequireAuth)
+
+		pr.With(d.Auth.RequirePermission("Host.View")).Get("/hosts", h.list)
+		pr.With(d.Auth.RequirePermission("Host.View")).Get("/hosts/{id}", h.get)
+		pr.With(d.Auth.RequirePermission("Host.View")).Get("/hosts/stats/status", h.statusStats)
+		pr.With(d.Auth.RequirePermission("Host.Enroll")).Post("/hosts", h.create)
+		pr.With(d.Auth.RequirePermission("Host.Edit")).Put("/hosts/{id}", h.update)
+		pr.With(d.Auth.RequirePermission("Host.Delete")).Delete("/hosts/{id}", h.del)
+		pr.With(d.Auth.RequirePermission("Host.Edit")).Post("/hosts/{id}/groups/{groupId}", h.addGroup)
+		pr.With(d.Auth.RequirePermission("Host.Edit")).Delete("/hosts/{id}/groups/{groupId}", h.removeGroup)
+	})
+}
+
+type handler struct{ d *app.Deps }
+
+func (h *handler) list(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	var (
+		hosts []models.Host
+		err   error
+	)
+	// Inventory.View shows all hosts; otherwise restrict to accessible hosts.
+	if p.Has("Host.Enroll") || p.Has("Admin.All") {
+		hosts, err = h.d.Store.ListHosts(r.Context(), limit, offset)
+	} else {
+		hosts, err = h.d.Store.ListAccessibleHosts(r.Context(), p.UserID, p.IsSuperAdmin)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list hosts")
+		return
+	}
+	if hosts == nil {
+		hosts = []models.Host{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": hosts, "count": len(hosts)})
+}
+
+func (h *handler) get(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid host id")
+		return
+	}
+	host, err := h.d.Store.GetHost(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, host)
+}
+
+func (h *handler) statusStats(w http.ResponseWriter, r *http.Request) {
+	counts, err := h.d.Store.CountHostsByStatus(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load stats")
+		return
+	}
+	writeJSON(w, http.StatusOK, counts)
+}
+
+type hostReq struct {
+	Hostname    string   `json:"hostname"`
+	Description string   `json:"description"`
+	Environment string   `json:"environment"`
+	Owner       string   `json:"owner"`
+	Address     string   `json:"address"`
+	WGAddress   string   `json:"wgAddress"`
+	SSHPort     int      `json:"sshPort"`
+	SSHUser     string   `json:"sshUser"`
+	Tags        []string `json:"tags"`
+}
+
+func (rq hostReq) toInput() store.HostInput {
+	return store.HostInput{
+		Hostname: rq.Hostname, Description: rq.Description, Environment: rq.Environment,
+		Owner: rq.Owner, Address: rq.Address, WGAddress: rq.WGAddress,
+		SSHPort: rq.SSHPort, SSHUser: rq.SSHUser, Tags: rq.Tags,
+	}
+}
+
+func (h *handler) create(w http.ResponseWriter, r *http.Request) {
+	var rq hostReq
+	if err := json.NewDecoder(r.Body).Decode(&rq); err != nil || rq.Hostname == "" {
+		writeError(w, http.StatusBadRequest, "hostname is required")
+		return
+	}
+	host, err := h.d.Store.CreateHost(r.Context(), rq.toInput())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create host")
+		return
+	}
+	h.audit(r, "host.create", host.ID.String(), map[string]any{"hostname": host.Hostname})
+	writeJSON(w, http.StatusCreated, host)
+}
+
+func (h *handler) update(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid host id")
+		return
+	}
+	var rq hostReq
+	if err := json.NewDecoder(r.Body).Decode(&rq); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	host, err := h.d.Store.UpdateHost(r.Context(), id, rq.toInput())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update host")
+		return
+	}
+	h.audit(r, "host.update", id.String(), map[string]any{"hostname": host.Hostname})
+	writeJSON(w, http.StatusOK, host)
+}
+
+func (h *handler) del(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid host id")
+		return
+	}
+	if err := h.d.Store.DeleteHost(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete host")
+		return
+	}
+	h.audit(r, "host.delete", id.String(), nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (h *handler) addGroup(w http.ResponseWriter, r *http.Request) {
+	hostID, err1 := uuid.Parse(chi.URLParam(r, "id"))
+	groupID, err2 := uuid.Parse(chi.URLParam(r, "groupId"))
+	if err1 != nil || err2 != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.d.Store.AddHostToGroup(r.Context(), hostID, groupID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not add to group")
+		return
+	}
+	h.audit(r, "host.group_add", hostID.String(), map[string]any{"groupId": groupID.String()})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "added"})
+}
+
+func (h *handler) removeGroup(w http.ResponseWriter, r *http.Request) {
+	hostID, err1 := uuid.Parse(chi.URLParam(r, "id"))
+	groupID, err2 := uuid.Parse(chi.URLParam(r, "groupId"))
+	if err1 != nil || err2 != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.d.Store.RemoveHostFromGroup(r.Context(), hostID, groupID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not remove from group")
+		return
+	}
+	h.audit(r, "host.group_remove", hostID.String(), map[string]any{"groupId": groupID.String()})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+func (h *handler) audit(r *http.Request, action, targetID string, detail map[string]any) {
+	p := auth.MustPrincipal(r)
+	var actorID *uuid.UUID
+	var name string
+	if p != nil {
+		actorID = &p.UserID
+		name = p.Username
+	}
+	_, _ = h.d.Store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: actorID, ActorName: name, Action: action,
+		TargetKind: "host", TargetID: targetID, Detail: detail,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
