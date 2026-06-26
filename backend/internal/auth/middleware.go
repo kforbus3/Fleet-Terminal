@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"strings"
 )
@@ -65,6 +66,17 @@ func (s *Service) RequireCSRF(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// AuthenticateToken validates a raw access token and returns its Principal. Used
+// by the WebSocket terminal endpoint, where browsers cannot set an Authorization
+// header and pass the short-lived token via a query parameter instead.
+func (s *Service) AuthenticateToken(ctx context.Context, tokenStr string) (*Principal, error) {
+	claims, err := ParseAccessToken(s.cfg.JWTSecret, tokenStr)
+	if err != nil {
+		return nil, err
+	}
+	return s.loadPrincipal(ctx, claims)
 }
 
 func bearerToken(r *http.Request) string {

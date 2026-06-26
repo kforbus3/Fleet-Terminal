@@ -1,0 +1,261 @@
+// Package terminal serves the browser SSH terminal over WebSocket. It relays
+// bytes between the WebSocket and an SSH PTY opened by the gateway, records the
+// session (asciicast v2), and writes session/audit metadata.
+package terminal
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/fleet-terminal/backend/internal/app"
+	"github.com/fleet-terminal/backend/internal/auth"
+	"github.com/fleet-terminal/backend/internal/metrics"
+	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/fleet-terminal/backend/internal/recorder"
+	"github.com/fleet-terminal/backend/internal/sshgw"
+	"github.com/fleet-terminal/backend/internal/store"
+)
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	// Same-origin is enforced by the reverse proxy / CORS; allow the upgrade here.
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// Mount attaches the terminal WebSocket endpoint.
+func Mount(r chi.Router, d *app.Deps, gw *sshgw.Gateway) {
+	h := &handler{d: d, gw: gw}
+	// WebSocket auth uses a query-param token (browsers cannot set headers on WS).
+	r.Get("/terminal/{hostId}", h.serve)
+}
+
+type handler struct {
+	d  *app.Deps
+	gw *sshgw.Gateway
+}
+
+type controlMsg struct {
+	Type string `json:"type"`
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+	Data string `json:"data"`
+}
+
+func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token := r.URL.Query().Get("token")
+	principal, err := h.d.Auth.AuthenticateToken(ctx, token)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !principal.Has("Host.Connect") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	hostID, err := uuid.Parse(chi.URLParam(r, "hostId"))
+	if err != nil {
+		http.Error(w, "bad host id", http.StatusBadRequest)
+		return
+	}
+	// Authorization: group membership or active temporary grant (super admin bypass).
+	if !principal.IsSuperAdmin {
+		ok, aerr := h.d.Store.UserCanAccessHost(ctx, principal.UserID, hostID)
+		if aerr != nil || !ok {
+			http.Error(w, "not authorized for host", http.StatusForbidden)
+			return
+		}
+	}
+	host, err := h.d.Store.GetHost(ctx, hostID)
+	if err != nil {
+		http.Error(w, "host not found", http.StatusNotFound)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	h.run(ctx, conn, principal, host)
+}
+
+// run drives a single terminal session lifecycle.
+func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal, host *models.Host) {
+	// Resolve the address the gateway dials: prefer the WireGuard address.
+	dialHost := host.WGAddress
+	if dialHost == "" {
+		dialHost = host.Address
+	}
+	if dialHost == "" {
+		dialHost = host.Hostname
+	}
+
+	sendErr := func(msg string) {
+		_ = ws.WriteMessage(websocket.TextMessage, mustJSON(controlMsg{Type: "error", Data: msg}))
+	}
+
+	gwConn, err := h.gw.Dial(ctx, p.SessionID.String(), dialHost, host.SSHPort, host.SSHUser)
+	if err != nil {
+		sendErr("connection failed: " + err.Error())
+		return
+	}
+	defer gwConn.Close()
+
+	session, err := gwConn.Client.NewSession()
+	if err != nil {
+		sendErr("ssh session failed: " + err.Error())
+		return
+	}
+	defer session.Close()
+
+	stdin, _ := session.StdinPipe()
+	stdout, _ := session.StdoutPipe()
+	stderr, _ := session.StderrPipe()
+
+	cols, rows := 120, 32
+	modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
+	if err := session.RequestPty("xterm-256color", rows, cols, modes); err != nil {
+		sendErr("pty request failed: " + err.Error())
+		return
+	}
+	if err := session.Shell(); err != nil {
+		sendErr("shell start failed: " + err.Error())
+		return
+	}
+
+	// Persist the SSH session record + start recording.
+	rec, _ := h.d.Store.CreateSSHSession(ctx, store.SSHSessionInput{
+		SessionID: &p.SessionID, UserID: &p.UserID, HostID: &host.ID,
+		Username: p.Username, Hostname: host.Hostname,
+	})
+	var sshSessionID uuid.UUID
+	if rec != nil {
+		sshSessionID = rec.ID
+	}
+	metrics.ActiveSSHSessions.Inc()
+	defer metrics.ActiveSSHSessions.Dec()
+
+	startUnix := time.Now().Unix()
+	var capture *recorder.Recorder
+	if sshSessionID != uuid.Nil {
+		capture, _ = recorder.New(h.d.Cfg.RecordingDir, sshSessionID.String(), cols, rows, startUnix)
+	}
+
+	_, _ = h.d.Store.AppendAudit(ctx, models.AuditEvent{
+		ActorID: &p.UserID, ActorName: p.Username, Action: "session.start",
+		TargetKind: "host", TargetID: host.ID.String(),
+		Detail: map[string]any{"hostname": host.Hostname, "sshSessionId": sshSessionID},
+	})
+
+	var bytesIn, bytesOut int64
+	done := make(chan struct{})
+
+	// SSH stdout/stderr -> WebSocket (and recording).
+	pump := func(src interface{ Read([]byte) (int, error) }) {
+		buf := make([]byte, 4096)
+		for {
+			n, err := src.Read(buf)
+			if n > 0 {
+				bytesOut += int64(n)
+				if capture != nil {
+					capture.Output(buf[:n])
+				}
+				if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}
+	go pump(stdout)
+	go pump(stderr)
+
+	// WebSocket -> SSH stdin / control.
+	go func() {
+		for {
+			mt, data, err := ws.ReadMessage()
+			if err != nil {
+				break
+			}
+			switch mt {
+			case websocket.BinaryMessage:
+				bytesIn += int64(len(data))
+				if capture != nil {
+					capture.Input(data)
+				}
+				_, _ = stdin.Write(data)
+			case websocket.TextMessage:
+				var cm controlMsg
+				if json.Unmarshal(data, &cm) == nil {
+					switch cm.Type {
+					case "resize":
+						if cm.Cols > 0 && cm.Rows > 0 {
+							_ = session.WindowChange(cm.Rows, cm.Cols)
+							if capture != nil {
+								capture.Resize(cm.Cols, cm.Rows)
+							}
+						}
+					case "input":
+						b := []byte(cm.Data)
+						bytesIn += int64(len(b))
+						if capture != nil {
+							capture.Input(b)
+						}
+						_, _ = stdin.Write(b)
+					}
+				}
+			}
+		}
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}()
+
+	<-done
+	_ = session.Close()
+
+	exitCode := 0
+	if capture != nil {
+		res := capture.Close()
+		_, _ = h.d.Store.CreateRecording(ctx, recordingInput(sshSessionID, res))
+	}
+	if sshSessionID != uuid.Nil {
+		_ = h.d.Store.EndSSHSession(ctx, sshSessionID, exitCode, bytesIn, bytesOut)
+	}
+	_, _ = h.d.Store.AppendAudit(ctx, models.AuditEvent{
+		ActorID: &p.UserID, ActorName: p.Username, Action: "session.end",
+		TargetKind: "host", TargetID: host.ID.String(),
+		Detail: map[string]any{"bytesIn": bytesIn, "bytesOut": bytesOut, "sshSessionId": sshSessionID},
+	})
+}
+
+func recordingInput(sshSessionID uuid.UUID, res recorder.Result) store.RecordingInput {
+	return store.RecordingInput{
+		SSHSessionID: sshSessionID, Format: "asciicast-v2", Path: res.Path,
+		SizeBytes: res.SizeBytes, DurationMS: res.DurationMS, SHA256: res.SHA256,
+	}
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
+}

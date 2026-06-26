@@ -58,6 +58,11 @@ func run() error {
 	}
 
 	srv := api.NewServer(cfg, pool, log, version)
+	if err := srv.InitBackground(ctx); err != nil {
+		return err
+	}
+	log.Info("ssh certificate authority ready")
+
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           srv.Handler(),

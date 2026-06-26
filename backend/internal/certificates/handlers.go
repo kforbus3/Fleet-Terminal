@@ -1,0 +1,117 @@
+// Package certificates exposes certificate-authority and issued-certificate
+// management endpoints (lifecycle: list, rotate CA, revoke, KRL).
+package certificates
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/fleet-terminal/backend/internal/app"
+	"github.com/fleet-terminal/backend/internal/auth"
+	"github.com/fleet-terminal/backend/internal/ca"
+	"github.com/fleet-terminal/backend/internal/models"
+)
+
+// Mount attaches certificate management routes.
+func Mount(r chi.Router, d *app.Deps, caMgr *ca.CA) {
+	h := &handler{d: d, ca: caMgr}
+	r.Group(func(pr chi.Router) {
+		pr.Use(d.Auth.RequireAuth)
+		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Get("/certificates", h.list)
+		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Get("/certificates/ca", h.listCA)
+		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Post("/certificates/ca/rotate", h.rotate)
+		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Get("/certificates/krl", h.krl)
+		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Post("/certificates/{serial}/revoke", h.revoke)
+	})
+}
+
+type handler struct {
+	d  *app.Deps
+	ca *ca.CA
+}
+
+func (h *handler) list(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	certs, err := h.d.Store.ListCertificates(r.Context(), nil, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list certificates")
+		return
+	}
+	if certs == nil {
+		certs = []models.SSHCertificate{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"certificates": certs})
+}
+
+func (h *handler) listCA(w http.ResponseWriter, r *http.Request) {
+	cas, err := h.d.Store.ListCAKeys(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list CAs")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cas": cas, "activeUserCA": h.ca.PublicKeyAuthorized()})
+}
+
+func (h *handler) rotate(w http.ResponseWriter, r *http.Request) {
+	if err := h.ca.Rotate(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "rotation failed")
+		return
+	}
+	h.audit(r, "certificate.ca_rotate", h.ca.ActiveID(), nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "rotated", "activeCa": h.ca.ActiveID()})
+}
+
+func (h *handler) revoke(w http.ResponseWriter, r *http.Request) {
+	serial, err := strconv.ParseUint(chi.URLParam(r, "serial"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid serial")
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := h.d.Store.RevokeCertificate(r.Context(), serial, body.Reason); err != nil {
+		writeError(w, http.StatusInternalServerError, "revocation failed")
+		return
+	}
+	h.audit(r, "certificate.revoke", strconv.FormatUint(serial, 10), map[string]any{"reason": body.Reason})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (h *handler) krl(w http.ResponseWriter, r *http.Request) {
+	serials, err := h.d.Store.RevokedSerials(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load KRL")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revokedSerials": serials})
+}
+
+func (h *handler) audit(r *http.Request, action, targetID string, detail map[string]any) {
+	p := auth.MustPrincipal(r)
+	var actorID *uuid.UUID
+	var name string
+	if p != nil {
+		actorID = &p.UserID
+		name = p.Username
+	}
+	_, _ = h.d.Store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: actorID, ActorName: name, Action: action,
+		TargetKind: "certificate", TargetID: targetID, Detail: detail,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}

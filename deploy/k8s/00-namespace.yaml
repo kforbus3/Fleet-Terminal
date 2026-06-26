@@ -1,0 +1,10 @@
+# Fleet Terminal — dedicated namespace for all platform resources.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-terminal
+  labels:
+    app.kubernetes.io/name: fleet-terminal
+    app.kubernetes.io/part-of: fleet-terminal
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted

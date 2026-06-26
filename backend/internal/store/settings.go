@@ -1,0 +1,106 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// SavedFilter is a user's stored dashboard query.
+type SavedFilter struct {
+	ID        uuid.UUID       `json:"id"`
+	UserID    uuid.UUID       `json:"userId"`
+	Name      string          `json:"name"`
+	Scope     string          `json:"scope"`
+	Query     json.RawMessage `json:"query"`
+	CreatedAt time.Time       `json:"createdAt"`
+}
+
+// GetSetting returns the raw JSON value for a settings key.
+func (s *Store) GetSetting(ctx context.Context, key string) (json.RawMessage, error) {
+	var v json.RawMessage
+	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key=$1`, key).Scan(&v)
+	if err != nil {
+		return nil, mapNotFound(err)
+	}
+	return v, nil
+}
+
+// SetSetting upserts a settings key with the given JSON-encodable value.
+func (s *Store) SetSetting(ctx context.Context, key string, value any) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at) VALUES ($1,$2, now())
+		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, key, b)
+	return err
+}
+
+// ListSettings returns every setting keyed by name.
+func (s *Store) ListSettings(ctx context.Context) (map[string]json.RawMessage, error) {
+	rows, err := s.pool.Query(ctx, `SELECT key, value FROM settings ORDER BY key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]json.RawMessage)
+	for rows.Next() {
+		var k string
+		var v json.RawMessage
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}
+
+// ListSavedFilters returns a user's saved dashboard filters.
+func (s *Store) ListSavedFilters(ctx context.Context, userID uuid.UUID) ([]SavedFilter, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, name, scope, query, created_at FROM saved_filters
+		WHERE user_id=$1 ORDER BY scope, name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SavedFilter
+	for rows.Next() {
+		var f SavedFilter
+		if err := rows.Scan(&f.ID, &f.UserID, &f.Name, &f.Scope, &f.Query, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// CreateSavedFilter stores a saved filter for a user.
+func (s *Store) CreateSavedFilter(ctx context.Context, userID uuid.UUID, name, scope string, query json.RawMessage) (*SavedFilter, error) {
+	if scope == "" {
+		scope = "hosts"
+	}
+	if len(query) == 0 {
+		query = json.RawMessage("{}")
+	}
+	var f SavedFilter
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO saved_filters (user_id, name, scope, query) VALUES ($1,$2,$3,$4)
+		RETURNING id, user_id, name, scope, query, created_at`,
+		userID, name, scope, query).
+		Scan(&f.ID, &f.UserID, &f.Name, &f.Scope, &f.Query, &f.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// DeleteSavedFilter removes a saved filter owned by the user.
+func (s *Store) DeleteSavedFilter(ctx context.Context, userID, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM saved_filters WHERE id=$1 AND user_id=$2`, id, userID)
+	return err
+}

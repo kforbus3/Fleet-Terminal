@@ -22,11 +22,25 @@ var (
 	ErrSessionInvalid     = errors.New("session invalid or expired")
 )
 
+// SessionHook is invoked after a session is created (login) or destroyed
+// (logout), letting the SSH identity layer mint/zeroize ephemeral credentials
+// without auth importing that layer (avoids an import cycle).
+type SessionHook func(ctx context.Context, userID, sessionID uuid.UUID, username string)
+
 // Service holds auth dependencies and orchestrates login/session lifecycle.
 type Service struct {
 	store *store.Store
 	cfg   *config.Config
 	log   *slog.Logger
+
+	onSessionCreated   SessionHook
+	onSessionDestroyed SessionHook
+}
+
+// SetSessionHooks registers identity lifecycle callbacks.
+func (s *Service) SetSessionHooks(created, destroyed SessionHook) {
+	s.onSessionCreated = created
+	s.onSessionDestroyed = destroyed
 }
 
 // NewService constructs the auth Service.
@@ -121,6 +135,9 @@ func (s *Service) CreateSession(ctx context.Context, u *models.User, ip, ua stri
 	if err := s.store.RecordLoginSuccess(ctx, u.ID); err != nil {
 		s.log.Warn("record login success", "err", err)
 	}
+	if s.onSessionCreated != nil {
+		s.onSessionCreated(ctx, u.ID, sess.ID, u.Username)
+	}
 	return &Tokens{
 		Access: access, Refresh: refresh, CSRF: csrf, RefreshHash: refreshHash,
 		AccessExpiry: time.Now().Add(s.cfg.AccessTokenTTL), Session: sess,
@@ -166,8 +183,11 @@ func (s *Service) Refresh(ctx context.Context, sessionID uuid.UUID, presentedRef
 	}, nil
 }
 
-// Logout revokes a session.
+// Logout revokes a session and triggers ephemeral credential destruction.
 func (s *Service) Logout(ctx context.Context, sessionID uuid.UUID) error {
+	if s.onSessionDestroyed != nil {
+		s.onSessionDestroyed(ctx, uuid.Nil, sessionID, "")
+	}
 	return s.store.RevokeSession(ctx, sessionID)
 }
 

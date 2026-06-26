@@ -1,0 +1,41 @@
+# Ingress — terminates TLS and routes a single host to frontend + backend.
+# /api and /ws go straight to the backend (WebSocket-aware); everything else
+# hits the nginx SPA. Assumes an ingress-nginx controller + cert-manager.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fleet-terminal
+  namespace: fleet-terminal
+  labels:
+    app.kubernetes.io/name: fleet-terminal
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - fleet.example.com
+      secretName: fleet-tls
+  rules:
+    - host: fleet.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: fleet-backend
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fleet-frontend
+                port:
+                  number: 80
