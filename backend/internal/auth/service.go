@@ -1,0 +1,203 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/fleet-terminal/backend/internal/config"
+	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/fleet-terminal/backend/internal/store"
+)
+
+// Common authentication errors surfaced to handlers.
+var (
+	ErrInvalidCredentials = errors.New("invalid username or password")
+	ErrAccountDisabled    = errors.New("account is disabled")
+	ErrAccountLocked      = errors.New("account is locked")
+	ErrSessionInvalid     = errors.New("session invalid or expired")
+)
+
+// Service holds auth dependencies and orchestrates login/session lifecycle.
+type Service struct {
+	store *store.Store
+	cfg   *config.Config
+	log   *slog.Logger
+}
+
+// NewService constructs the auth Service.
+func NewService(st *store.Store, cfg *config.Config, log *slog.Logger) *Service {
+	return &Service{store: st, cfg: cfg, log: log}
+}
+
+// Tokens bundles freshly issued credentials returned to the transport layer.
+type Tokens struct {
+	Access       string
+	Refresh      string
+	CSRF         string
+	RefreshHash  string
+	AccessExpiry time.Time
+	Session      *models.Session
+}
+
+// Authenticate verifies credentials and returns the user on success, applying
+// lockout policy. It does not create a session (the handler does, after MFA).
+func (s *Service) Authenticate(ctx context.Context, username, password string) (*models.User, error) {
+	u, err := s.store.GetUserByUsername(ctx, username)
+	if err != nil {
+		// Run a dummy verify to keep timing roughly constant for unknown users.
+		_, _ = VerifyPassword(password, "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+		return nil, ErrInvalidCredentials
+	}
+	if u.IsDisabled {
+		return nil, ErrAccountDisabled
+	}
+	if u.LockedUntil != nil && u.LockedUntil.After(time.Now()) {
+		return nil, ErrAccountLocked
+	}
+	hash, err := s.store.GetPasswordHash(ctx, u.ID)
+	if err != nil {
+		return nil, ErrInvalidCredentials
+	}
+	ok, err := VerifyPassword(password, hash)
+	if err != nil || !ok {
+		s.applyFailure(ctx, u.ID)
+		return nil, ErrInvalidCredentials
+	}
+	return u, nil
+}
+
+func (s *Service) applyFailure(ctx context.Context, userID uuid.UUID) {
+	max, lockMin := s.lockoutPolicy(ctx)
+	if _, err := s.store.RecordLoginFailure(ctx, userID, max, time.Duration(lockMin)*time.Minute); err != nil {
+		s.log.Warn("record login failure", "err", err)
+	}
+}
+
+func (s *Service) lockoutPolicy(ctx context.Context) (maxFailed, lockoutMinutes int) {
+	maxFailed, lockoutMinutes = 5, 15
+	var raw json.RawMessage
+	if err := s.store.Pool().QueryRow(ctx,
+		`SELECT value FROM settings WHERE key='lockout_policy'`).Scan(&raw); err == nil {
+		var p struct {
+			Max  int `json:"max_failed"`
+			Lock int `json:"lockout_minutes"`
+		}
+		if json.Unmarshal(raw, &p) == nil {
+			if p.Max > 0 {
+				maxFailed = p.Max
+			}
+			if p.Lock > 0 {
+				lockoutMinutes = p.Lock
+			}
+		}
+	}
+	return
+}
+
+// CreateSession issues a session plus access/refresh/CSRF tokens for a user.
+func (s *Service) CreateSession(ctx context.Context, u *models.User, ip, ua string, mfaPassed bool) (*Tokens, error) {
+	refresh, refreshHash, err := NewRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+	expires := time.Now().Add(s.cfg.RefreshTokenTTL)
+	sess, err := s.store.CreateSession(ctx, u.ID, refreshHash, ip, ua, mfaPassed, expires)
+	if err != nil {
+		return nil, err
+	}
+	access, err := IssueAccessToken(s.cfg.JWTSecret, u.ID, sess.ID, u.Username, s.cfg.AccessTokenTTL)
+	if err != nil {
+		return nil, err
+	}
+	csrf, err := NewCSRFToken()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.RecordLoginSuccess(ctx, u.ID); err != nil {
+		s.log.Warn("record login success", "err", err)
+	}
+	return &Tokens{
+		Access: access, Refresh: refresh, CSRF: csrf, RefreshHash: refreshHash,
+		AccessExpiry: time.Now().Add(s.cfg.AccessTokenTTL), Session: sess,
+	}, nil
+}
+
+// Refresh rotates a refresh token and issues a new access token. The old refresh
+// token is invalidated (rotation) to detect token theft/replay.
+func (s *Service) Refresh(ctx context.Context, sessionID uuid.UUID, presentedRefresh string) (*Tokens, error) {
+	sess, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, ErrSessionInvalid
+	}
+	if sess.RevokedAt != nil || sess.ExpiresAt.Before(time.Now()) {
+		return nil, ErrSessionInvalid
+	}
+	storedHash, err := s.store.GetSessionRefreshHash(ctx, sessionID)
+	if err != nil || storedHash != HashToken(presentedRefresh) {
+		// Possible replay of a rotated token: revoke the session defensively.
+		_ = s.store.RevokeSession(ctx, sessionID)
+		return nil, ErrSessionInvalid
+	}
+	u, err := s.store.GetUserByID(ctx, sess.UserID)
+	if err != nil || u.IsDisabled {
+		return nil, ErrSessionInvalid
+	}
+	newRefresh, newHash, err := NewRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+	expires := time.Now().Add(s.cfg.RefreshTokenTTL)
+	if err := s.store.RotateRefresh(ctx, sessionID, newHash, expires); err != nil {
+		return nil, err
+	}
+	access, err := IssueAccessToken(s.cfg.JWTSecret, u.ID, sessionID, u.Username, s.cfg.AccessTokenTTL)
+	if err != nil {
+		return nil, err
+	}
+	csrf, _ := NewCSRFToken()
+	return &Tokens{
+		Access: access, Refresh: newRefresh, CSRF: csrf, RefreshHash: newHash,
+		AccessExpiry: time.Now().Add(s.cfg.AccessTokenTTL), Session: sess,
+	}, nil
+}
+
+// Logout revokes a session.
+func (s *Service) Logout(ctx context.Context, sessionID uuid.UUID) error {
+	return s.store.RevokeSession(ctx, sessionID)
+}
+
+// loadPrincipal builds a Principal from a validated session, resolving permissions.
+func (s *Service) loadPrincipal(ctx context.Context, claims *Claims) (*Principal, error) {
+	sess, err := s.store.GetSession(ctx, claims.SessionID)
+	if err != nil || sess.RevokedAt != nil || sess.ExpiresAt.Before(time.Now()) {
+		return nil, ErrSessionInvalid
+	}
+	if s.cfg.SessionIdleTTL > 0 && time.Since(sess.LastSeenAt) > s.cfg.SessionIdleTTL {
+		_ = s.store.RevokeSession(ctx, sess.ID)
+		return nil, ErrSessionInvalid
+	}
+	u, err := s.store.GetUserByID(ctx, claims.UserID)
+	if err != nil || u.IsDisabled {
+		return nil, ErrSessionInvalid
+	}
+	perms, err := s.store.UserPermissions(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.store.TouchSession(ctx, sess.ID)
+	return &Principal{
+		UserID: u.ID, SessionID: sess.ID, Username: u.Username,
+		IsSuperAdmin: u.IsSuperAdmin, Permissions: perms,
+	}, nil
+}
+
+// Store exposes the underlying store for handlers that need it.
+func (s *Service) Store() *store.Store { return s.store }
+
+// Config exposes config for handlers/middleware.
+func (s *Service) Config() *config.Config { return s.cfg }

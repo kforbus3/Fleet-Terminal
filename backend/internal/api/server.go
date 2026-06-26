@@ -14,8 +14,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/fleet-terminal/backend/internal/auth"
+	"github.com/fleet-terminal/backend/internal/bootstrap"
 	"github.com/fleet-terminal/backend/internal/config"
 	"github.com/fleet-terminal/backend/internal/metrics"
+	"github.com/fleet-terminal/backend/internal/store"
 )
 
 // Server holds shared dependencies for HTTP handlers. Module handlers are
@@ -26,12 +29,20 @@ type Server struct {
 	Log     *slog.Logger
 	Version string
 
+	Store *store.Store
+	Auth  *auth.Service
+
 	router chi.Router
 }
 
 // NewServer constructs a Server and builds its router.
 func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version string) *Server {
-	s := &Server{Cfg: cfg, DB: db, Log: log, Version: version}
+	st := store.New(db)
+	s := &Server{
+		Cfg: cfg, DB: db, Log: log, Version: version,
+		Store: st,
+		Auth:  auth.NewService(st, cfg, log),
+	}
 	s.router = s.buildRouter()
 	return s
 }
@@ -70,11 +81,15 @@ func (s *Server) buildRouter() chi.Router {
 }
 
 // registerRoutes is the single extension point where module handlers attach.
-// It is intentionally light in M0 and grows with each milestone.
+// Each milestone mounts its module here.
 func (s *Server) registerRoutes(r chi.Router) {
 	r.Get("/ping", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"pong": "ok"})
 	})
+
+	// M2 — first-run wizard + authentication.
+	bootstrap.NewHandler(s.Store, s.Cfg).Mount(r)
+	auth.NewHandler(s.Auth).Mount(r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

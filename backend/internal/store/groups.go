@@ -1,0 +1,102 @@
+package store
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+
+	"github.com/fleet-terminal/backend/internal/models"
+)
+
+// ListGroups returns all groups.
+func (s *Store) ListGroups(ctx context.Context) ([]models.Group, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, description, created_at FROM groups ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Group
+	for rows.Next() {
+		var g models.Group
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// CreateGroup creates a group.
+func (s *Store) CreateGroup(ctx context.Context, name, description string) (*models.Group, error) {
+	var g models.Group
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO groups (name, description) VALUES ($1,$2)
+		 RETURNING id, name, description, created_at`, name, description).
+		Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt)
+	return &g, err
+}
+
+// DeleteGroup removes a group.
+func (s *Store) DeleteGroup(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM groups WHERE id=$1`, id)
+	return err
+}
+
+// AddUserToGroup adds a user to a group.
+func (s *Store) AddUserToGroup(ctx context.Context, userID, groupID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO user_groups (user_id, group_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, userID, groupID)
+	return err
+}
+
+// RemoveUserFromGroup removes a user from a group.
+func (s *Store) RemoveUserFromGroup(ctx context.Context, userID, groupID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM user_groups WHERE user_id=$1 AND group_id=$2`, userID, groupID)
+	return err
+}
+
+// AddHostToGroup adds a host to a group.
+func (s *Store) AddHostToGroup(ctx context.Context, hostID, groupID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO host_groups (host_id, group_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, hostID, groupID)
+	return err
+}
+
+// RemoveHostFromGroup removes a host from a group.
+func (s *Store) RemoveHostFromGroup(ctx context.Context, hostID, groupID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM host_groups WHERE host_id=$1 AND group_id=$2`, hostID, groupID)
+	return err
+}
+
+// UserGroupNames lists a user's group names.
+func (s *Store) UserGroupNames(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	return s.scanStrings(ctx, `
+		SELECT g.name FROM user_groups ug JOIN groups g ON g.id=ug.group_id
+		WHERE ug.user_id=$1 ORDER BY g.name`, userID)
+}
+
+// UserCanAccessHost reports whether a user has access to a host through any
+// shared group membership OR an active (non-expired) temporary permission.
+func (s *Store) UserCanAccessHost(ctx context.Context, userID, hostID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			-- permanent: user and host share a group
+			SELECT 1 FROM user_groups ug
+			JOIN host_groups hg ON hg.group_id = ug.group_id
+			WHERE ug.user_id = $1 AND hg.host_id = $2
+			UNION
+			-- temporary: direct host grant still active
+			SELECT 1 FROM temporary_permissions tp
+			WHERE tp.user_id = $1 AND tp.host_id = $2
+			  AND tp.revoked_at IS NULL AND tp.expires_at > now()
+			UNION
+			-- temporary: group grant covering the host, still active
+			SELECT 1 FROM temporary_permissions tp
+			JOIN host_groups hg ON hg.group_id = tp.group_id
+			WHERE tp.user_id = $1 AND hg.host_id = $2
+			  AND tp.revoked_at IS NULL AND tp.expires_at > now()
+		)`, userID, hostID).Scan(&ok)
+	return ok, err
+}
