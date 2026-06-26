@@ -111,9 +111,12 @@ func (c *CA) SignUserCertificate(pub ssh.PublicKey, keyID string, principals []s
 		ValidBefore:     uint64(now.Add(validFor).Unix()),
 		Permissions: ssh.Permissions{
 			Extensions: map[string]string{
-				"permit-pty":             "",
-				"permit-user-rc":         "",
+				"permit-pty":              "",
+				"permit-user-rc":          "",
 				"permit-agent-forwarding": "",
+				// Required so the gateway can open the ProxyJump direct-tcpip
+				// channel from the jump host onward to the managed host.
+				"permit-port-forwarding": "",
 			},
 		},
 	}

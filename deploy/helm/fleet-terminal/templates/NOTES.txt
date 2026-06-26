@@ -34,5 +34,3 @@ SECURITY: secrets.create=true rendered a Secret from values. For production,
 set strong values via --set / a values file, or use secrets.existingSecret with
 a Sealed/External Secret. Generate values with: openssl rand -hex 32
 {{- end }}
-{{- if not (and .Values.postgres.enabled .Values.postgres.auth.password) }}
-{{- end }}
