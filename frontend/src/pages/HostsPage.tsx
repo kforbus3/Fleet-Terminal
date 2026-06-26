@@ -244,7 +244,7 @@ export function HostsPage() {
       <Typography variant="h5" gutterBottom>
         Host Inventory
       </Typography>
-      <Box sx={{ width: "100%" }}>
+      <Box sx={{ width: "100%", height: "calc(100vh - 180px)" }}>
         <DataGrid<Host>
           rows={rows}
           columns={columns}
