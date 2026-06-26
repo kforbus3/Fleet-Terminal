@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert, Box, Button, Card, CardContent, Stack, TextField, Typography,
 } from "@mui/material";
 import TerminalIcon from "@mui/icons-material/Terminal";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
+import { bootstrapStatus } from "../api/auth";
 
 // Credentials login form. On success the auth store holds the access token and
-// principal; we then route to the dashboard.
+// principal; we then route to the dashboard. On first run (no users yet) we send
+// the operator to the bootstrap wizard instead of showing a sign-in form.
 export function LoginPage() {
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
@@ -15,6 +17,18 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    bootstrapStatus()
+      .then((s) => {
+        if (active && s.bootstrapAvailable) navigate("/bootstrap", { replace: true });
+      })
+      .catch(() => {/* backend unreachable — stay on the sign-in form */});
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
