@@ -4,12 +4,23 @@ import { useMemo } from "react";
 import { buildTheme } from "./theme";
 import { useUIStore } from "./store/ui";
 import { AppLayout } from "./components/AppLayout";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 import { DashboardPage } from "./pages/DashboardPage";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { HostsPage } from "./pages/HostsPage";
+import { LoginPage } from "./pages/LoginPage";
+import { BootstrapPage } from "./pages/BootstrapPage";
+import { UsersPage } from "./pages/UsersPage";
+import { RolesPage } from "./pages/RolesPage";
+import { GroupsPage } from "./pages/GroupsPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { AuditPage } from "./pages/AuditPage";
+import { ApprovalsPage } from "./pages/ApprovalsPage";
+import { SessionsPage } from "./pages/SessionsPage";
+import { TerminalPage } from "./pages/TerminalPage";
 
-// Root component. Routing is intentionally broad now; each milestone replaces a
-// PlaceholderPage with its real implementation. Permission-gating is layered in
-// at M2 via a ProtectedRoute wrapper.
+// Root component. Public routes (login, bootstrap) sit outside the guarded
+// AppLayout; every other route requires authentication and, where relevant, a
+// specific backend permission. Backend remains the sole authorization authority.
 export function App() {
   const mode = useUIStore((s) => s.mode);
   const theme = useMemo(() => buildTheme(mode), [mode]);
@@ -18,20 +29,24 @@ export function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Routes>
-        <Route element={<AppLayout />}>
-          <Route index element={<DashboardPage />} />
-          <Route path="hosts" element={<PlaceholderPage title="Host Inventory" />} />
-          <Route path="terminals" element={<PlaceholderPage title="Terminals" />} />
-          <Route path="sessions" element={<PlaceholderPage title="Session Replay" />} />
-          <Route path="approvals" element={<PlaceholderPage title="Approval Queue" />} />
-          <Route path="audit" element={<PlaceholderPage title="Audit Logs" />} />
-          <Route path="users" element={<PlaceholderPage title="User Management" />} />
-          <Route path="roles" element={<PlaceholderPage title="Role Management" />} />
-          <Route path="groups" element={<PlaceholderPage title="Group Management" />} />
-          <Route path="enrollment" element={<PlaceholderPage title="Host Enrollment" />} />
-          <Route path="certificates" element={<PlaceholderPage title="Certificate Management" />} />
-          <Route path="settings" element={<PlaceholderPage title="System Settings" />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/bootstrap" element={<BootstrapPage />} />
+
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppLayout />}>
+            <Route index element={<DashboardPage />} />
+            <Route path="hosts" element={<ProtectedRoute permission="Host.View"><HostsPage /></ProtectedRoute>} />
+            <Route path="terminals/:hostId" element={<ProtectedRoute permission="Host.Connect"><TerminalPage /></ProtectedRoute>} />
+            <Route path="sessions" element={<ProtectedRoute permission="Session.Replay"><SessionsPage /></ProtectedRoute>} />
+            <Route path="approvals" element={<ApprovalsPage />} />
+            <Route path="audit" element={<ProtectedRoute permission="Audit.View"><AuditPage /></ProtectedRoute>} />
+            <Route path="users" element={<ProtectedRoute permission="User.Edit"><UsersPage /></ProtectedRoute>} />
+            <Route path="roles" element={<ProtectedRoute permission="Role.Edit"><RolesPage /></ProtectedRoute>} />
+            <Route path="groups" element={<ProtectedRoute permission="Group.Edit"><GroupsPage /></ProtectedRoute>} />
+            <Route path="settings" element={<ProtectedRoute permission="System.Configure"><SettingsPage /></ProtectedRoute>} />
+          </Route>
         </Route>
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </ThemeProvider>
