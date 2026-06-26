@@ -1,0 +1,23 @@
+# Secrets & env
+.env
+*.local
+
+# Go
+/backend/bin/
+*.test
+*.out
+
+# Node
+node_modules/
+/frontend/dist/
+.vite/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime data
+/data/
+recordings/
+*.log
