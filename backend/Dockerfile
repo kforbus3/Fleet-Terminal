@@ -16,12 +16,15 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags "-s -w -X main.version=${VERSION}" \
       -o /out/fleetd ./cmd/fleetd
+# Offline admin/recovery CLI shipped alongside the server.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/fleetctl ./cmd/fleetctl
 
 FROM alpine:3.20 AS runtime
 RUN apk add --no-cache ca-certificates openssh-client tzdata && \
     addgroup -S fleet && adduser -S -G fleet fleet && \
     mkdir -p /var/lib/fleet/recordings && chown -R fleet:fleet /var/lib/fleet
 COPY --from=build /out/fleetd /usr/local/bin/fleetd
+COPY --from=build /out/fleetctl /usr/local/bin/fleetctl
 USER fleet
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/fleetd"]
