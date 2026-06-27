@@ -120,8 +120,8 @@ export function SessionsPage() {
 
   const exportRec = async (s: SSHSession) => {
     try {
-      await downloadRecording(s.id, `${s.username}@${s.hostname}`);
-      setSnack("Recording exported — open the .html file to watch.");
+      await downloadRecording(s);
+      setSnack("Recording exported — open the .html file to watch offline.");
     } catch {
       setSnack("Could not export this recording.");
     }

@@ -31,6 +31,7 @@ func Mount(r chi.Router, d *app.Deps) {
 		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions/{id}", h.get)
 		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions/{id}/recording", h.recording)
 		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions/{id}/recording/download", h.downloadRecording)
+		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions/{id}/recording/player", h.playerRecording)
 		// Deleting/pruning recordings is a retention/admin action.
 		pr.With(d.Auth.RequirePermission("System.Configure")).Delete("/sessions/{id}/recording", h.deleteRecording)
 		pr.With(d.Auth.RequirePermission("System.Configure")).Post("/recordings/prune", h.prune)
@@ -145,6 +146,33 @@ func (h *handler) downloadRecording(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-asciicast")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"session-"+id.String()+".cast\"")
 	_, _ = io.Copy(w, f)
+}
+
+// playerRecording returns a fully self-contained HTML document that plays the
+// recording offline (player bundle + cast inlined). The client downloads it.
+func (h *handler) playerRecording(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	rec, err := h.d.Store.GetRecordingBySession(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "recording not found")
+		return
+	}
+	cast, err := os.ReadFile(h.resolvePath(rec.Path))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "recording file not found")
+		return
+	}
+	sess, _ := h.d.Store.GetSSHSession(r.Context(), id)
+	title := "Fleet Terminal session"
+	if sess != nil {
+		title = sess.Username + "@" + sess.Hostname + " · " + sess.StartedAt.Format("2006-01-02 15:04:05")
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, renderPlayerHTML(title, string(cast)))
 }
 
 // deleteRecording removes a session's recording (DB row + file).
