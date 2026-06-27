@@ -52,6 +52,7 @@ services:
       FLEET_JUMP_HOST: ${FLEET_JUMP_HOST:-jumphost:22}
       FLEET_JUMP_USER: ${FLEET_JUMP_USER:-fleet}
       FLEET_RECORDING_DIR: /var/lib/fleet/recordings
+      FLEET_MAX_UPLOAD_BYTES: ${FLEET_MAX_UPLOAD_BYTES:-5368709120}
     volumes:
       - recordings:/var/lib/fleet/recordings
     depends_on:

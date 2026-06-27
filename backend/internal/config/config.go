@@ -63,6 +63,9 @@ type Config struct {
 	// Session recordings storage
 	RecordingDir string
 
+	// SFTP upload size cap in bytes (0 = unlimited).
+	MaxUploadBytes int64
+
 	// Observability
 	LogLevel     string
 	LogFormat    string // "json" or "text"
@@ -103,6 +106,7 @@ func Load() (*Config, error) {
 		WGJumpEndpoint:     env("FLEET_WG_JUMP_ENDPOINT", "jumphost:51820"),
 		WGPort:             envInt("FLEET_WG_PORT", 51820),
 		RecordingDir:       env("FLEET_RECORDING_DIR", "/var/lib/fleet/recordings"),
+		MaxUploadBytes:     envInt64("FLEET_MAX_UPLOAD_BYTES", 5<<30), // 5 GiB default
 		LogLevel:           env("FLEET_LOG_LEVEL", "info"),
 		LogFormat:          env("FLEET_LOG_FORMAT", "json"),
 		OTLPEndpoint:       env("FLEET_OTLP_ENDPOINT", ""),
@@ -188,6 +192,15 @@ func env(key, def string) string {
 func envInt(key string, def int) int {
 	if v, ok := os.LookupEnv(key); ok {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envInt64(key string, def int64) int64 {
+	if v, ok := os.LookupEnv(key); ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

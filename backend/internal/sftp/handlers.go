@@ -5,6 +5,7 @@ package sftp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,8 +23,6 @@ import (
 	"github.com/fleet-terminal/backend/internal/sshgw"
 	"github.com/fleet-terminal/backend/internal/store"
 )
-
-const maxUpload = 1 << 30 // 1 GiB cap
 
 // Mount attaches SFTP routes (require auth + File.Transfer + host access).
 func Mount(r chi.Router, d *app.Deps, gw *sshgw.Gateway) {
@@ -186,8 +185,25 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
 	rec, _ := h.d.Store.RecordSFTPTransfer(r.Context(), store.SFTPTransferInput{
 		UserID: &p.UserID, HostID: &host.ID, Direction: "upload", RemotePath: remote, Status: "started",
 	})
-	n, cerr := io.Copy(dst, io.LimitReader(r.Body, maxUpload))
+	// Enforce the configured cap (0 = unlimited) and REJECT oversized uploads
+	// rather than silently truncating. The partial remote file is removed.
+	body := r.Body
+	if limit := h.d.Cfg.MaxUploadBytes; limit > 0 {
+		body = http.MaxBytesReader(w, r.Body, limit)
+	}
+	n, cerr := io.Copy(dst, body)
 	if cerr != nil {
+		_ = dst.Close()
+		_ = client.Remove(remote)
+		if rec != nil {
+			_ = h.d.Store.CompleteSFTPTransfer(r.Context(), rec.ID, n, "failed")
+		}
+		var mbe *http.MaxBytesError
+		if errors.As(cerr, &mbe) {
+			writeError(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("file exceeds the %d-byte upload limit", h.d.Cfg.MaxUploadBytes))
+			return
+		}
 		writeError(w, http.StatusBadGateway, "write: "+cerr.Error())
 		return
 	}
