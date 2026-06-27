@@ -93,6 +93,16 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 			issuer.DestroySession(ctx, sessionID)
 		},
 	)
+	// Re-issue an ephemeral identity for a valid session if the in-RAM vault was
+	// cleared (e.g. by a backend restart), so SSH/SFTP survive restarts.
+	authSvc.SetEnsureCredential(func(ctx context.Context, userID, sessionID uuid.UUID, username string) {
+		if _, ok := vault.Get(sessionID); ok {
+			return
+		}
+		if _, err := issuer.Issue(ctx, sessionID, userID, username, dedupe([]string{"fleet", username})); err != nil {
+			log.Warn("re-issue ephemeral identity", "err", err)
+		}
+	})
 
 	s.router = s.buildRouter()
 	return s

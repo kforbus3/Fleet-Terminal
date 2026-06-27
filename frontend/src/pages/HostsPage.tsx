@@ -14,7 +14,6 @@ import CableIcon from "@mui/icons-material/Cable";
 import TerminalIcon from "@mui/icons-material/Terminal";
 import FolderIcon from "@mui/icons-material/Folder";
 import { Alert, CircularProgress, List, ListItem, ListItemText } from "@mui/material";
-import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createHost, deleteHost, enrollHost, listHosts, nextWGAddress,
@@ -174,7 +173,6 @@ function NewHostDialog({ open, onClose, onSubmit, submitting }: NewHostDialogPro
 // delete and a create dialog. Theme (light/dark) is inherited from the provider.
 export function HostsPage() {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["hosts"],
     queryFn: listHosts,
@@ -286,8 +284,11 @@ export function HostsPage() {
               <TerminalIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Browse files (SFTP)">
-            <IconButton size="small" onClick={() => navigate(`/files/${params.row.id}`)}>
+          <Tooltip title="Browse files (SFTP) in a new tab">
+            <IconButton
+              size="small"
+              onClick={() => window.open(`/files/${params.row.id}`, "_blank", "noopener")}
+            >
               <FolderIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -314,7 +315,7 @@ export function HostsPage() {
         </Stack>
       ),
     },
-  ], [deleteMut, enrollMut, navigate]);
+  ], [deleteMut, enrollMut]);
 
   const rows = data?.hosts ?? [];
 

@@ -37,6 +37,7 @@ type Service struct {
 
 	onSessionCreated   SessionHook
 	onSessionDestroyed SessionHook
+	ensureCredential   SessionHook
 
 	// WebAuthn relying-party instance (lazily initialized) + ceremony sessions.
 	waOnce  sync.Once
@@ -50,6 +51,11 @@ func (s *Service) SetSessionHooks(created, destroyed SessionHook) {
 	s.onSessionCreated = created
 	s.onSessionDestroyed = destroyed
 }
+
+// SetEnsureCredential registers a callback invoked on each authenticated request
+// to guarantee the session has a live ephemeral SSH credential, re-issuing one
+// if it is missing (e.g. after a backend restart wiped the in-RAM vault).
+func (s *Service) SetEnsureCredential(fn SessionHook) { s.ensureCredential = fn }
 
 // NewService constructs the auth Service.
 func NewService(st *store.Store, cfg *config.Config, log *slog.Logger) *Service {
@@ -218,6 +224,11 @@ func (s *Service) loadPrincipal(ctx context.Context, claims *Claims) (*Principal
 		return nil, err
 	}
 	_ = s.store.TouchSession(ctx, sess.ID)
+	// Guarantee the session has a live ephemeral SSH credential (re-issued if the
+	// in-RAM vault was cleared by a restart), so SSH/SFTP keep working.
+	if s.ensureCredential != nil {
+		s.ensureCredential(ctx, u.ID, sess.ID, u.Username)
+	}
 	return &Principal{
 		UserID: u.ID, SessionID: sess.ID, Username: u.Username,
 		IsSuperAdmin: u.IsSuperAdmin, Permissions: perms,

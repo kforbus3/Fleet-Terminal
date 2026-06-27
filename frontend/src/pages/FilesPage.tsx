@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   Alert, Box, Breadcrumbs, Button, IconButton, Link, List, ListItem,
@@ -11,6 +11,7 @@ import UploadFileIcon from "@mui/icons-material/UploadFile";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { downloadFile, listDir, uploadFile } from "../api/sftp";
+import { getHost } from "../api/hosts";
 
 // SFTP file browser. All transfers are brokered by the backend through the SSH
 // gateway and audited; the browser never speaks SFTP directly.
@@ -20,6 +21,15 @@ export function FilesPage() {
   const [path, setPath] = useState(".");
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+
+  const { data: host } = useQuery({
+    queryKey: ["host", hostId],
+    queryFn: () => getHost(hostId!),
+    enabled: !!hostId,
+  });
+  useEffect(() => {
+    if (host?.hostname) document.title = `Files · ${host.hostname} — Fleet Terminal`;
+  }, [host?.hostname]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["sftp", hostId, path],
@@ -44,12 +54,13 @@ export function FilesPage() {
 
   return (
     <Box
+      sx={{ p: 3, minHeight: "100vh" }}
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files); }}
     >
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
-        <Typography variant="h5">Files</Typography>
+        <Typography variant="h5">Files{host?.hostname ? ` · ${host.hostname}` : ""}</Typography>
         <Stack direction="row" spacing={1}>
           <Button startIcon={<ArrowUpwardIcon />} onClick={goUp} size="small">Up</Button>
           <Button
