@@ -1,16 +1,19 @@
 import { useState } from "react";
 import {
-  Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControlLabel, IconButton, Stack, Switch, Table, TableBody, TableCell,
+  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
+  Divider, FormControlLabel, IconButton, List, ListItem, ListItemText, Menu,
+  MenuItem, Snackbar, Stack, Switch, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TextField, Typography, Paper, Tooltip,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import MoreVertIcon from "@mui/icons-material/MoreVert";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createUser, deleteUser, listUsers, updateUser,
-  type CreateUserInput, type User,
+  createUser, deleteUser, listUsers, resetUserMFA, resetUserPassword,
+  setUserDisabled, terminateUserSessions, unlockUser, updateUser,
+  userLoginHistory, type AuthEvent, type CreateUserInput, type User,
 } from "../api/admin";
 
 const EMPTY_CREATE: CreateUserInput = {
@@ -27,8 +30,29 @@ export function UsersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateUserInput>(EMPTY_CREATE);
   const [editing, setEditing] = useState<User | null>(null);
+  const [menuEl, setMenuEl] = useState<null | HTMLElement>(null);
+  const [menuUser, setMenuUser] = useState<User | null>(null);
+  const [snack, setSnack] = useState<string | null>(null);
+  const [history, setHistory] = useState<{ user: User; events: AuthEvent[] } | null>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["users"] });
+
+  const openMenu = (el: HTMLElement, u: User) => { setMenuEl(el); setMenuUser(u); };
+  const closeMenu = () => { setMenuEl(null); setMenuUser(null); };
+
+  // Run an admin action against the menu's user, show feedback, refresh.
+  const runAction = async (label: string, fn: (id: string) => Promise<void>) => {
+    if (!menuUser) return;
+    const u = menuUser;
+    closeMenu();
+    try {
+      await fn(u.id);
+      setSnack(`${label}: ${u.username}`);
+      invalidate();
+    } catch {
+      setSnack(`Failed: ${label}`);
+    }
+  };
 
   const createMut = useMutation({
     mutationFn: () => createUser(form),
@@ -87,6 +111,11 @@ export function UsersPage() {
                   </Tooltip>
                   <Tooltip title="Delete">
                     <IconButton size="small" onClick={() => deleteMut.mutate(u.id)}><DeleteIcon fontSize="small" /></IconButton>
+                  </Tooltip>
+                  <Tooltip title="More actions">
+                    <IconButton size="small" onClick={(e) => openMenu(e.currentTarget, u)}>
+                      <MoreVertIcon fontSize="small" />
+                    </IconButton>
                   </Tooltip>
                 </TableCell>
               </TableRow>
@@ -152,6 +181,58 @@ export function UsersPage() {
             onClick={() => editing && updateMut.mutate(editing)}>Save</Button>
         </DialogActions>
       </Dialog>
+
+      <Menu anchorEl={menuEl} open={Boolean(menuEl)} onClose={closeMenu}>
+        <MenuItem onClick={() => runAction(menuUser?.isDisabled ? "Enabled" : "Disabled",
+          (id) => setUserDisabled(id, !menuUser?.isDisabled))}>
+          {menuUser?.isDisabled ? "Enable account" : "Disable account"}
+        </MenuItem>
+        <MenuItem onClick={() => runAction("Unlocked", unlockUser)}>Unlock account</MenuItem>
+        <Divider />
+        <MenuItem onClick={() => {
+          const pw = window.prompt("New password for " + menuUser?.username);
+          if (pw) void runAction("Password reset", (id) => resetUserPassword(id, pw, true));
+          else closeMenu();
+        }}>Reset password…</MenuItem>
+        <MenuItem onClick={() => runAction("MFA reset", resetUserMFA)}>Reset MFA</MenuItem>
+        <MenuItem onClick={() => runAction("Sessions terminated", terminateUserSessions)}>
+          Terminate sessions
+        </MenuItem>
+        <Divider />
+        <MenuItem onClick={async () => {
+          if (!menuUser) return;
+          const u = menuUser; closeMenu();
+          try { setHistory({ user: u, events: await userLoginHistory(u.id) }); }
+          catch { setSnack("Failed to load history"); }
+        }}>Login history…</MenuItem>
+      </Menu>
+
+      <Dialog open={Boolean(history)} onClose={() => setHistory(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Login history — {history?.user.username}</DialogTitle>
+        <DialogContent dividers>
+          <List dense>
+            {(history?.events ?? []).map((e) => (
+              <ListItem key={e.id} disableGutters>
+                <ListItemText
+                  primary={`${e.event}${e.ip ? "  ·  " + e.ip : ""}`}
+                  secondary={new Date(e.createdAt).toLocaleString()}
+                />
+              </ListItem>
+            ))}
+            {history && history.events.length === 0 && (
+              <ListItem><ListItemText primary="No events" /></ListItem>
+            )}
+          </List>
+        </DialogContent>
+        <DialogActions><Button onClick={() => setHistory(null)}>Close</Button></DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={Boolean(snack)} autoHideDuration={3000} onClose={() => setSnack(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="info" onClose={() => setSnack(null)}>{snack}</Alert>
+      </Snackbar>
     </Box>
   );
 }

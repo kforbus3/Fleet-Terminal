@@ -194,6 +194,51 @@ func (h *handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password_reset"})
 }
 
+// resetMFA removes all of a user's second factors (e.g. lost authenticator).
+func (h *handler) resetMFA(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	if err := h.d.Store.ResetUserMFA(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not reset mfa")
+		return
+	}
+	h.audit(r, "user.reset_mfa", "user", id.String(), nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "mfa_reset"})
+}
+
+// terminateSessions revokes all active sessions for a user (forces re-login).
+func (h *handler) terminateSessions(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	if err := h.d.Store.RevokeUserSessions(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not terminate sessions")
+		return
+	}
+	h.audit(r, "user.terminate_sessions", "user", id.String(), nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sessions_terminated"})
+}
+
+// loginHistory returns recent authentication events for a user.
+func (h *handler) loginHistory(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	events, err := h.d.Store.ListAuthEvents(r.Context(), &id, 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load history")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
 func (h *handler) assignRole(w http.ResponseWriter, r *http.Request) {
 	userID, err1 := uuid.Parse(chi.URLParam(r, "id"))
 	roleID, err2 := uuid.Parse(chi.URLParam(r, "roleId"))

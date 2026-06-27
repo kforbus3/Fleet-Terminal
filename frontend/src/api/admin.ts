@@ -74,6 +74,39 @@ export async function deleteUser(id: string): Promise<void> {
   await api.delete(`/api/v1/users/${id}`);
 }
 
+export async function setUserDisabled(id: string, disabled: boolean): Promise<void> {
+  await api.post(`/api/v1/users/${id}/disable`, { disabled });
+}
+
+export async function unlockUser(id: string): Promise<void> {
+  await api.post(`/api/v1/users/${id}/unlock`);
+}
+
+export async function resetUserPassword(id: string, newPassword: string, mustChangePassword: boolean): Promise<void> {
+  await api.post(`/api/v1/users/${id}/reset-password`, { newPassword, mustChangePassword });
+}
+
+export async function resetUserMFA(id: string): Promise<void> {
+  await api.post(`/api/v1/users/${id}/reset-mfa`);
+}
+
+export async function terminateUserSessions(id: string): Promise<void> {
+  await api.post(`/api/v1/users/${id}/terminate-sessions`);
+}
+
+export interface AuthEvent {
+  id: number;
+  event: string;
+  ip?: string;
+  userAgent?: string;
+  createdAt: string;
+}
+
+export async function userLoginHistory(id: string): Promise<AuthEvent[]> {
+  const { data } = await api.get<{ events: AuthEvent[] }>(`/api/v1/users/${id}/login-history`);
+  return data.events ?? [];
+}
+
 export async function listRoles(): Promise<Role[]> {
   const { data } = await api.get<{ roles: Role[] }>("/api/v1/roles");
   return data.roles;
