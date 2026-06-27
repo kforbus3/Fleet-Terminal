@@ -14,6 +14,12 @@ export function setAccessToken(token: string | null) {
   accessToken = token;
 }
 
+// getAccessToken exposes the in-memory token for streamed fetch() calls (large
+// SFTP transfers) that bypass the axios instance.
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
 api.interceptors.request.use((cfg) => {
   if (accessToken) {
     cfg.headers.Authorization = `Bearer ${accessToken}`;

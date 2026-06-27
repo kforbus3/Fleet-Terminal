@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -156,6 +157,12 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", path.Base(remote)))
+	// Advertise the size so the client can show download progress. Exposed to JS
+	// via Access-Control-Expose-Headers (CORS) when served cross-origin in dev.
+	if fi, serr := f.Stat(); serr == nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Length")
+	}
 	n, _ := io.Copy(w, f)
 	h.finishTransfer(r, rec, n)
 	h.audit(r, p, "sftp.download", host.ID, remote, n)
