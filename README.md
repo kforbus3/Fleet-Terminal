@@ -85,11 +85,24 @@ scripts/    orchestration + dev helpers
 
 ## Status
 
-This repository delivers a complete, coherent foundation with working vertical paths through
-every major subsystem (auth, RBAC, bootstrap, hosts, SSH CA, ephemeral identities, gateway,
-terminal, recording, audit, JIT approvals, admin). Some advanced automation (host enrollment
-push, monitoring scheduler, SFTP UI, MFA enrollment) is scaffolded for incremental deepening.
-See the milestone history in `git log`.
+Working and verified end-to-end (see `git log` for the milestone history):
+
+- Auth (Argon2id, JWT + rotating refresh, CSRF, lockout), **TOTP MFA**, first-run bootstrap
+- RBAC + host groups + **just-in-time approvals** with auto-expiry
+- Host inventory + **automated WireGuard enrollment** (provisions the jump-host peer and the
+  host interface over SSH; specify a WG address or auto-assign from the pool)
+- Internal SSH **CA + ephemeral per-login certificates** (in-RAM keys, 7-day, auto-renew, revoke)
+- Backend-only **browser SSH terminal** (xterm.js) through jump host + WireGuard
+- **Session recording** (asciicast v2) + replay
+- **Live host monitoring** (authenticated SSH health checks, no ICMP) with WebSocket push
+- **Audited SFTP** file transfer (browse/upload/download/drag-and-drop)
+- Hash-chained **tamper-evident audit** with integrity verification
+- Admin suite (users/roles/groups/settings), Prometheus metrics, health/ready
+- Docker Compose + local SSH test fabric; K8s manifests, Helm chart, systemd units
+
+Documented for incremental deepening: WebAuthn/passkeys MFA, distributed tracing, SAML/OIDC plugins.
+
+See [docs/operations.md](docs/operations.md) for day-to-day flows (enroll, connect, transfer, MFA).
 
 ## License
 
