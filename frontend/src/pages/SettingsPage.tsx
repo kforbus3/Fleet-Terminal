@@ -48,6 +48,7 @@ export function SettingsPage() {
     <Box>
       <Typography variant="h5" sx={{ mb: 2 }}>System Settings</Typography>
 
+      <WGSettingsCard current={settings["wireguard"]} />
       <BackupCard />
 
       <TableContainer component={Paper} variant="outlined">
@@ -98,6 +99,47 @@ export function SettingsPage() {
         </DialogActions>
       </Dialog>
     </Box>
+  );
+}
+
+// WGSettingsCard configures the VPN (jump host) WireGuard endpoint that managed
+// hosts dial, so it doesn't have to be entered for every enrollment.
+function WGSettingsCard({ current }: { current: unknown }) {
+  const qc = useQueryClient();
+  const cur = (current ?? {}) as { jumpHost?: string; jumpPort?: number };
+  const [jumpHost, setJumpHost] = useState(cur.jumpHost ?? "");
+  const [jumpPort, setJumpPort] = useState(String(cur.jumpPort ?? 51820));
+  const [saved, setSaved] = useState(false);
+
+  const save = useMutation({
+    mutationFn: () => setSetting("wireguard", { jumpHost: jumpHost.trim(), jumpPort: Number(jumpPort) || 51820 }),
+    onSuccess: () => { setSaved(true); void qc.invalidateQueries({ queryKey: ["settings"] }); void qc.invalidateQueries({ queryKey: ["next-wg"] }); },
+  });
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+      <Typography variant="h6">VPN server (WireGuard)</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+        Public address &amp; port that managed hosts use to reach the jump host over WireGuard.
+        Used as the default when enrolling hosts (overridable per host). Must be reachable from
+        the hosts on UDP.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="flex-start">
+        <TextField
+          label="Server name / IP" value={jumpHost}
+          onChange={(e) => { setJumpHost(e.target.value); setSaved(false); }}
+          placeholder="vpn.example.com" sx={{ flexGrow: 1 }}
+        />
+        <TextField
+          label="Port" type="number" value={jumpPort}
+          onChange={(e) => { setJumpPort(e.target.value); setSaved(false); }}
+          sx={{ width: 120 }}
+        />
+        <Button variant="contained" sx={{ mt: 1 }} disabled={save.isPending || !jumpHost.trim()} onClick={() => save.mutate()}>
+          {saved ? "Saved" : "Save"}
+        </Button>
+      </Stack>
+    </Paper>
   );
 }
 

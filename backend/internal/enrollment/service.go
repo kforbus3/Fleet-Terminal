@@ -230,8 +230,12 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	// 7) Bring up WireGuard on the host (kernel module preferred, userspace
 	//    wireguard-go fallback). The private key is generated on the host.
 	// The endpoint the managed host uses to reach the jump host (VPN server). Must
-	// be routable FROM the host — not the backend's internal name for the jump.
+	// be routable FROM the host. Precedence: per-enroll override -> DB setting ->
+	// config default (FLEET_WG_JUMP_ENDPOINT).
 	jumpEndpoint := strings.TrimSpace(params.WGEndpoint)
+	if jumpEndpoint == "" {
+		jumpEndpoint = s.store.WireGuardEndpoint(ctx)
+	}
 	if jumpEndpoint == "" {
 		jumpEndpoint = s.cfg.WGJumpEndpoint
 	}
@@ -259,11 +263,22 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	}
 	step("configure_jump_peer", "ok", fmt.Sprintf("peer %s allowed-ips %s/32", short(hostPub), wgIP))
 
-	// 9) Persist the address/enrolled state now so the validation dial can use it.
+	// 9) Connectivity check: confirm the WireGuard tunnel actually establishes a
+	//    handshake. A failure here usually means the jump endpoint is not
+	//    reachable from the host (firewall / wrong address / UDP port closed).
+	if ok, detail := s.verifyWireGuard(priv); ok {
+		step("verify_connectivity", "ok", detail)
+	} else {
+		step("verify_connectivity", "warning", fmt.Sprintf(
+			"no WireGuard handshake yet — ensure the jump endpoint %s is reachable from the host on UDP %d (firewall/port-forward) and the jump host is listening. %s",
+			jumpEndpoint, s.cfg.WGPort, detail))
+	}
+
+	// 10) Persist the address/enrolled state now so the validation dial can use it.
 	_ = s.store.SetHostWGAddress(ctx, host.ID, wgIP)
 	_ = s.store.SetHostEnrolled(ctx, host.ID, true)
 
-	// 10) Validate end to end: connect through the jump host using a per-user
+	// 11) Validate end to end: connect through the jump host using a per-user
 	//     certificate and run a command, proving cert auth + the tunnel path.
 	if id, verr := s.validateCertLogin(ctx, sessionID, wgIP, mgmtAddr, host.SSHPort, loginUser); verr == nil {
 		step("verify_certificate_login", "ok", "cert login via jump host: "+oneLine(id))
@@ -281,6 +296,44 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 
 	final, _ := s.store.GetEnrollmentJob(ctx, job.ID)
 	return &Result{Job: final, WGAddr: wgIP, HostPub: hostPub}, nil
+}
+
+// verifyWireGuard triggers and waits for a WireGuard handshake with the jump
+// host, returning whether the tunnel came up and a short detail string. It runs
+// on the host via the privileged runner so it works whether or not `wg` needs root.
+func (s *Service) verifyWireGuard(priv func(string) (string, error)) (bool, string) {
+	script := fmt.Sprintf(`IF=%s; JIP=%s
+ping -c1 -W1 "$JIP" >/dev/null 2>&1 || true
+i=0
+while [ $i -lt 16 ]; do
+  HS=$(wg show "$IF" latest-handshakes 2>/dev/null | awk '{print $2}' | sort -rn | head -1)
+  if [ -n "$HS" ] && [ "$HS" != 0 ]; then
+    NOW=$(date +%%s); AGO=$((NOW-HS))
+    RX=$(wg show "$IF" transfer 2>/dev/null | awk '{print $2}' | paste -sd+ - | bc 2>/dev/null)
+    echo "HANDSHAKE_OK age=${AGO}s rx=${RX:-0}"; exit 0
+  fi
+  i=$((i+1)); sleep 2
+done
+echo "HANDSHAKE_NONE"`, s.cfg.WGInterface, s.cfg.WGJumpIP)
+
+	out, err := priv(script)
+	if err != nil {
+		return false, "check failed: " + oneLine(out)
+	}
+	if strings.Contains(out, "HANDSHAKE_OK") {
+		return true, "wireguard handshake established (" + oneLine(parseAfter(out, "HANDSHAKE_OK")) + ")"
+	}
+	return false, ""
+}
+
+// parseAfter returns the text following a marker token on its line.
+func parseAfter(out, marker string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, marker); i >= 0 {
+			return strings.TrimSpace(line[i+len(marker):])
+		}
+	}
+	return ""
 }
 
 // validateCertLogin connects to the host through the jump host using the

@@ -482,7 +482,10 @@ interface EnrollDialogProps {
 
 function EnrollDialog({ open, pending, result, error, onClose }: EnrollDialogProps) {
   const stepColor = (s: string) =>
-    s === "ok" ? "success.main" : s === "failed" ? "error.main" : "text.secondary";
+    s === "ok" ? "success.main" : s === "failed" ? "error.main" : s === "warning" ? "warning.main" : "text.secondary";
+  const stepIcon = (s: string) =>
+    s === "ok" ? "✓" : s === "failed" ? "✗" : s === "warning" ? "⚠" : "•";
+  const hasWarning = result?.job.steps.some((s) => s.status === "warning");
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle>Host enrollment</DialogTitle>
@@ -496,8 +499,9 @@ function EnrollDialog({ open, pending, result, error, onClose }: EnrollDialogPro
         {error && <Alert severity="error">{error}</Alert>}
         {result && (
           <>
-            <Alert severity="success" sx={{ mb: 2 }}>
+            <Alert severity={hasWarning ? "warning" : "success"} sx={{ mb: 2 }}>
               Enrolled. Overlay address <b>{result.wgAddress}</b>; interface up on the host.
+              {hasWarning && " Connectivity warning — see steps below."}
             </Alert>
             <List dense>
               {result.job.steps.map((st, i) => (
@@ -505,7 +509,7 @@ function EnrollDialog({ open, pending, result, error, onClose }: EnrollDialogPro
                   <ListItemText
                     primary={
                       <Typography sx={{ color: stepColor(st.status) }}>
-                        {st.status === "ok" ? "✓" : st.status === "failed" ? "✗" : "•"} {st.name}
+                        {stepIcon(st.status)} {st.name}
                       </Typography>
                     }
                     secondary={st.detail}
