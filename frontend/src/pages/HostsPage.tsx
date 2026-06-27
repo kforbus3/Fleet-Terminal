@@ -11,7 +11,10 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import CableIcon from "@mui/icons-material/Cable";
+import TerminalIcon from "@mui/icons-material/Terminal";
+import FolderIcon from "@mui/icons-material/Folder";
 import { Alert, CircularProgress, List, ListItem, ListItemText } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createHost, deleteHost, enrollHost, listHosts, nextWGAddress,
@@ -168,6 +171,7 @@ function NewHostDialog({ open, onClose, onSubmit, submitting }: NewHostDialogPro
 // delete and a create dialog. Theme (light/dark) is inherited from the provider.
 export function HostsPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["hosts"],
     queryFn: listHosts,
@@ -266,9 +270,19 @@ export function HostsPage() {
       valueFormatter: (value) => fmtDate(value ? String(value) : undefined),
     },
     {
-      field: "actions", headerName: "Actions", width: 130, sortable: false, filterable: false,
+      field: "actions", headerName: "Actions", width: 190, sortable: false, filterable: false,
       renderCell: (params) => (
         <Stack direction="row" spacing={0.5}>
+          <Tooltip title="Open terminal">
+            <IconButton size="small" color="primary" onClick={() => navigate(`/terminals/${params.row.id}`)}>
+              <TerminalIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Browse files (SFTP)">
+            <IconButton size="small" onClick={() => navigate(`/files/${params.row.id}`)}>
+              <FolderIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           <Tooltip title={params.row.enrolled ? "Re-enroll (provision WireGuard)" : "Enroll (provision WireGuard)"}>
             <span>
               <IconButton
@@ -292,7 +306,7 @@ export function HostsPage() {
         </Stack>
       ),
     },
-  ], [deleteMut, enrollMut]);
+  ], [deleteMut, enrollMut, navigate]);
 
   const rows = data?.hosts ?? [];
 

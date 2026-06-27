@@ -31,6 +31,7 @@ import (
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/monitor"
 	"github.com/fleet-terminal/backend/internal/sessionsapi"
+	fleetsftp "github.com/fleet-terminal/backend/internal/sftp"
 	"github.com/fleet-terminal/backend/internal/sshgw"
 	"github.com/fleet-terminal/backend/internal/store"
 	"github.com/fleet-terminal/backend/internal/terminal"
@@ -205,6 +206,9 @@ func (s *Server) registerRoutes(r chi.Router) {
 
 	// M7 — live status WebSocket.
 	ws.Mount(r, deps, s.Hub)
+
+	// M9 — audited SFTP file transfer.
+	fleetsftp.Mount(r, deps, s.Gateway)
 
 	// Orchestrated modules (admin, audit, sessions, approvals).
 	admin.Mount(r, deps)
