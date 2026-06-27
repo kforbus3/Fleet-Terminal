@@ -29,10 +29,12 @@ import (
 	"github.com/fleet-terminal/backend/internal/hosts"
 	"github.com/fleet-terminal/backend/internal/identity"
 	"github.com/fleet-terminal/backend/internal/metrics"
+	"github.com/fleet-terminal/backend/internal/monitor"
 	"github.com/fleet-terminal/backend/internal/sessionsapi"
 	"github.com/fleet-terminal/backend/internal/sshgw"
 	"github.com/fleet-terminal/backend/internal/store"
 	"github.com/fleet-terminal/backend/internal/terminal"
+	"github.com/fleet-terminal/backend/internal/ws"
 )
 
 // Server holds shared dependencies for HTTP handlers. Module handlers are
@@ -48,6 +50,7 @@ type Server struct {
 	CA      *ca.CA
 	Issuer  *identity.Issuer
 	Gateway *sshgw.Gateway
+	Hub     *ws.Hub
 
 	router chi.Router
 }
@@ -68,6 +71,7 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 		CA:      caMgr,
 		Issuer:  issuer,
 		Gateway: gateway,
+		Hub:     ws.NewHub(),
 	}
 
 	// On login, mint an ephemeral SSH identity bound to the session; on logout,
@@ -96,6 +100,7 @@ func (s *Server) InitBackground(ctx context.Context) error {
 	}
 	go s.renewalLoop(ctx)
 	go s.reaperLoop(ctx)
+	go monitor.New(s.Store, s.Cfg, s.Log, s.Gateway, s.Issuer, s.Hub).Run(ctx)
 	return nil
 }
 
@@ -197,6 +202,9 @@ func (s *Server) registerRoutes(r chi.Router) {
 
 	// M8 — host enrollment (WireGuard provisioning + trust).
 	enrollment.Mount(r, deps, enrollment.New(s.Store, s.Cfg, s.Log, s.Gateway))
+
+	// M7 — live status WebSocket.
+	ws.Mount(r, deps, s.Hub)
 
 	// Orchestrated modules (admin, audit, sessions, approvals).
 	admin.Mount(r, deps)

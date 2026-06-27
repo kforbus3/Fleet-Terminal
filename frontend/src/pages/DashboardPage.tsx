@@ -1,11 +1,36 @@
 import { Box, Card, CardContent, Grid, Typography, Chip } from "@mui/material";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "../api/client";
+import { getHostStatusStats } from "../api/hosts";
+import { useFleetEvents } from "../api/events";
 
-// Landing dashboard. In M0 it confirms backend connectivity; later milestones
-// replace the cards with live fleet metrics (hosts online, active sessions, etc).
+// Landing dashboard. Shows backend connectivity plus live fleet health, which
+// updates in real time as the monitor pushes host.status events over WebSocket.
 export function DashboardPage() {
-  const { data, isError } = useQuery({ queryKey: ["version"], queryFn: getVersion });
+  const qc = useQueryClient();
+  const { data: version, isError } = useQuery({ queryKey: ["version"], queryFn: getVersion });
+  const { data: stats } = useQuery({
+    queryKey: ["host-status-stats"],
+    queryFn: getHostStatusStats,
+    refetchInterval: 30000,
+  });
+
+  // Refresh the counts whenever the monitor reports a status change.
+  useFleetEvents((e) => {
+    if (e.type === "host.status") {
+      void qc.invalidateQueries({ queryKey: ["host-status-stats"] });
+    }
+  });
+
+  const online = stats?.online ?? 0;
+  const offline = stats?.offline ?? 0;
+  const unknown = stats?.unknown ?? 0;
+
+  const cards: Array<[string, number | string, "success" | "error" | "warning" | "default"]> = [
+    ["Hosts Online", online, "success"],
+    ["Hosts Offline", offline, "error"],
+    ["Status Unknown", unknown, "warning"],
+  ];
 
   return (
     <Box>
@@ -24,8 +49,8 @@ export function DashboardPage() {
                   <Chip label="unreachable" color="error" size="small" />
                 ) : (
                   <Chip
-                    label={data ? `connected · ${data.version}` : "connecting…"}
-                    color={data ? "success" : "default"}
+                    label={version ? `connected · ${version.version}` : "connecting…"}
+                    color={version ? "success" : "default"}
                     size="small"
                   />
                 )}
@@ -33,18 +58,18 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         </Grid>
-        {[
-          ["Hosts Online", "—"],
-          ["Active Sessions", "—"],
-          ["Pending Approvals", "—"],
-        ].map(([label, value]) => (
+        {cards.map(([label, value, color]) => (
           <Grid item xs={12} sm={6} md={3} key={label}>
             <Card>
               <CardContent>
                 <Typography color="text.secondary" variant="overline">
                   {label}
                 </Typography>
-                <Typography variant="h4">{value}</Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
+                  <Typography variant="h4">{value}</Typography>
+                  <Chip size="small" label={color === "success" ? "live" : ""} color={color}
+                    sx={{ visibility: color === "success" ? "visible" : "hidden" }} />
+                </Box>
               </CardContent>
             </Card>
           </Grid>

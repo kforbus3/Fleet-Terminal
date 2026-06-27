@@ -102,6 +102,45 @@ func (g *Gateway) DialHost(handle, host string, port int, user string) (any, err
 	return g.Dial(context.Background(), handle, host, port, user)
 }
 
+// DialWithSigner connects to host:port through the jump host using an explicit
+// certificate signer (e.g. the monitor's system identity) rather than a session
+// credential from the vault.
+func (g *Gateway) DialWithSigner(ctx context.Context, signer ssh.Signer, host string, port int, user string) (*Conn, error) {
+	if signer == nil {
+		return nil, fmt.Errorf("nil signer")
+	}
+	hostKeyCB := ssh.InsecureIgnoreHostKey()
+	jumpCfg := &ssh.ClientConfig{
+		User:            g.cfg.JumpUser,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCB,
+		Timeout:         10 * time.Second,
+	}
+	jumpClient, err := ssh.Dial("tcp", g.cfg.JumpHost, jumpCfg)
+	if err != nil {
+		return nil, fmt.Errorf("dial jump host: %w", err)
+	}
+	target := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	tunnel, err := jumpClient.DialContext(ctx, "tcp", target)
+	if err != nil {
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("tunnel to %s via jump: %w", target, err)
+	}
+	hostCfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCB,
+		Timeout:         10 * time.Second,
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(tunnel, target, hostCfg)
+	if err != nil {
+		_ = tunnel.Close()
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("ssh handshake with %s: %w", target, err)
+	}
+	return &Conn{Client: ssh.NewClient(ncc, chans, reqs), jump: jumpClient}, nil
+}
+
 // DialDirect opens an SSH connection straight to addr:port using the session's
 // ephemeral certificate, bypassing the jump host. Enrollment uses this to reach
 // the jump host itself and a host that is not yet on the WireGuard overlay.
