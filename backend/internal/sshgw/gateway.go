@@ -19,14 +19,15 @@ import (
 
 // Gateway establishes SSH connections through the jump host.
 type Gateway struct {
-	cfg   *config.Config
-	log   *slog.Logger
-	vault *identity.Vault
+	cfg    *config.Config
+	log    *slog.Logger
+	vault  *identity.Vault
+	issuer *identity.Issuer
 }
 
 // New constructs a Gateway.
-func New(cfg *config.Config, log *slog.Logger, vault *identity.Vault) *Gateway {
-	return &Gateway{cfg: cfg, log: log, vault: vault}
+func New(cfg *config.Config, log *slog.Logger, vault *identity.Vault, issuer *identity.Issuer) *Gateway {
+	return &Gateway{cfg: cfg, log: log, vault: vault, issuer: issuer}
 }
 
 // Conn bundles a live SSH client and its underlying network connections so the
@@ -54,6 +55,11 @@ func (g *Gateway) Dial(ctx context.Context, sessionID, host string, port int, us
 	if !ok {
 		return nil, fmt.Errorf("no live credential for session")
 	}
+	return g.dialWithCred(ctx, cred, host, port, user)
+}
+
+// dialWithCred opens jump → tunnel → host using a specific credential.
+func (g *Gateway) dialWithCred(ctx context.Context, cred *identity.Credential, host string, port int, user string) (*Conn, error) {
 	signer := cred.CertSigner()
 	if signer == nil {
 		return nil, fmt.Errorf("session credential unavailable")
@@ -95,6 +101,34 @@ func (g *Gateway) Dial(ctx context.Context, sessionID, host string, port int, us
 		return nil, fmt.Errorf("ssh handshake with %s: %w", target, err)
 	}
 	return &Conn{Client: ssh.NewClient(ncc, chans, reqs), jump: jumpClient}, nil
+}
+
+// DialForHost connects to a managed host using a certificate UNIQUE to this
+// (session, host) pair, minting it if necessary. Unlike Dial (which uses the
+// session-level identity for the jump host / enrollment), every managed-host
+// connection authenticates with its own distinct key and certificate serial.
+func (g *Gateway) DialForHost(ctx context.Context, sessionID, userID, hostID uuid.UUID, username, hostname, host string, port int, user string) (*Conn, error) {
+	if g.issuer == nil {
+		return nil, fmt.Errorf("gateway issuer unavailable")
+	}
+	if _, err := g.issuer.EnsureHostCredential(ctx, sessionID, userID, hostID, username, hostname); err != nil {
+		return nil, fmt.Errorf("issue per-host credential: %w", err)
+	}
+	cred, ok := g.vault.GetHost(sessionID, hostID)
+	if !ok {
+		return nil, fmt.Errorf("no per-host credential for session")
+	}
+	return g.dialWithCred(ctx, cred, host, port, user)
+}
+
+// HostCredentialSerial returns the serial of the per-host certificate bound to a
+// session+host, for audit/verification.
+func (g *Gateway) HostCredentialSerial(sessionID, hostID uuid.UUID) (uint64, bool) {
+	cred, ok := g.vault.GetHost(sessionID, hostID)
+	if !ok {
+		return 0, false
+	}
+	return cred.Serial, true
 }
 
 // DialHost implements app.Dialer.
@@ -163,6 +197,120 @@ func (g *Gateway) DialPasswordViaJump(ctx context.Context, sessionID, host strin
 		_ = tunnel.Close()
 		_ = jumpClient.Close()
 		return nil, fmt.Errorf("ssh password auth to %s via jump: %w", target, err)
+	}
+	return &Conn{Client: ssh.NewClient(ncc, chans, reqs), jump: jumpClient}, nil
+}
+
+// DialDirectKey opens a direct SSH connection authenticating with a raw key
+// signer (a plain public key, not a certificate). Enrollment uses this to
+// bootstrap a host that has no password auth but already trusts an operator's
+// key in authorized_keys, and does not yet trust the Fleet CA.
+func (g *Gateway) DialDirectKey(ctx context.Context, addr string, port int, user string, signer ssh.Signer) (*ssh.Client, error) {
+	return g.DialDirectAuth(ctx, addr, port, user, ssh.PublicKeys(signer))
+}
+
+// DialDirectAuth opens a direct SSH connection using an arbitrary auth method.
+// Enrollment uses this for SSH-agent bootstrap, where the auth method delegates
+// signing to the operator's forwarded agent (the private key never reaches us).
+func (g *Gateway) DialDirectAuth(ctx context.Context, addr string, port int, user string, auth ssh.AuthMethod) (*ssh.Client, error) {
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{auth},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         20 * time.Second,
+	}
+	d := net.Dialer{Timeout: 15 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(addr, fmt.Sprintf("%d", port)))
+	if err != nil {
+		return nil, fmt.Errorf("dial %s:%d: %w", addr, port, err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("ssh auth to %s: %w", addr, err)
+	}
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
+// DialAuthViaJump bootstraps a host *through the jump host* using an arbitrary
+// auth method for the host, while the session certificate authenticates to the
+// jump host. Used by SSH-agent enrollment when the host is only reachable via
+// the jump.
+func (g *Gateway) DialAuthViaJump(ctx context.Context, sessionID, host string, port int, user string, auth ssh.AuthMethod) (*Conn, error) {
+	cred, ok := g.vaultLookup(sessionID)
+	if !ok {
+		return nil, fmt.Errorf("no live credential for session")
+	}
+	jumpSigner := cred.CertSigner()
+	if jumpSigner == nil {
+		return nil, fmt.Errorf("session credential unavailable")
+	}
+	jumpClient, err := ssh.Dial("tcp", g.cfg.JumpHost, &ssh.ClientConfig{
+		User:            g.cfg.JumpUser,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(jumpSigner)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dial jump host: %w", err)
+	}
+	target := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	tunnel, err := jumpClient.DialContext(ctx, "tcp", target)
+	if err != nil {
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("tunnel to %s via jump: %w", target, err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(tunnel, target, &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{auth},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         20 * time.Second,
+	})
+	if err != nil {
+		_ = tunnel.Close()
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("ssh auth to %s via jump: %w", target, err)
+	}
+	return &Conn{Client: ssh.NewClient(ncc, chans, reqs), jump: jumpClient}, nil
+}
+
+// DialKeyViaJump bootstraps a host *through the jump host* using a raw key signer
+// for the host, while the session certificate authenticates to the jump host.
+// Use when the backend cannot reach the host directly but the jump host can.
+func (g *Gateway) DialKeyViaJump(ctx context.Context, sessionID, host string, port int, user string, signer ssh.Signer) (*Conn, error) {
+	cred, ok := g.vaultLookup(sessionID)
+	if !ok {
+		return nil, fmt.Errorf("no live credential for session")
+	}
+	jumpSigner := cred.CertSigner()
+	if jumpSigner == nil {
+		return nil, fmt.Errorf("session credential unavailable")
+	}
+	jumpClient, err := ssh.Dial("tcp", g.cfg.JumpHost, &ssh.ClientConfig{
+		User:            g.cfg.JumpUser,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(jumpSigner)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dial jump host: %w", err)
+	}
+	target := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	tunnel, err := jumpClient.DialContext(ctx, "tcp", target)
+	if err != nil {
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("tunnel to %s via jump: %w", target, err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(tunnel, target, &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	})
+	if err != nil {
+		_ = tunnel.Close()
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("ssh key auth to %s via jump: %w", target, err)
 	}
 	return &Conn{Client: ssh.NewClient(ncc, chans, reqs), jump: jumpClient}, nil
 }

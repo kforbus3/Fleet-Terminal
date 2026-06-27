@@ -16,9 +16,16 @@ import (
 // certificate, so routes require authentication + Host.Enroll.
 func Mount(r chi.Router, d *app.Deps, svc *Service) {
 	h := &handler{d: d, svc: svc}
+	// SSH-agent enrollment is a WebSocket; it authenticates with a query-param
+	// token (browsers/CLIs can't set headers on the upgrade) inside the handler.
+	r.Get("/hosts/{id}/enroll/agent", h.enrollAgent)
 	r.Group(func(pr chi.Router) {
 		pr.Use(d.Auth.RequireAuth)
 		pr.With(d.Auth.RequirePermission("Host.Enroll")).Post("/hosts/{id}/enroll", h.enroll)
+		// No-install flow: fetch a bootstrap script the operator pipes through
+		// their own ssh, then finish with the host public key they paste back.
+		pr.With(d.Auth.RequirePermission("Host.Enroll")).Get("/hosts/{id}/enroll/script", h.enrollScript)
+		pr.With(d.Auth.RequirePermission("Host.Enroll")).Post("/hosts/{id}/enroll/finish", h.enrollFinish)
 		pr.With(d.Auth.RequirePermission("Host.Enroll")).Get("/enrollment/jobs", h.listJobs)
 		pr.With(d.Auth.RequirePermission("Host.Enroll")).Get("/enrollment/jobs/{id}", h.getJob)
 	})
@@ -30,9 +37,11 @@ type handler struct {
 }
 
 type enrollReq struct {
-	Method        string `json:"method"`        // "password" | "trusted"
-	BootstrapUser string `json:"bootstrapUser"` // SSH user for password bootstrap
+	Method        string `json:"method"`        // "password" | "key" | "trusted"
+	BootstrapUser string `json:"bootstrapUser"` // SSH user for password/key bootstrap
 	Password      string `json:"password"`      // SSH password for bootstrap
+	PrivateKey    string `json:"privateKey"`    // PEM private key for "key" bootstrap
+	KeyPassphrase string `json:"keyPassphrase"` // passphrase for an encrypted key
 	SudoPassword  string `json:"sudoPassword"`  // sudo password (if sudo needs one)
 	WGEndpoint    string `json:"wgEndpoint"`    // jump host's public WireGuard endpoint
 	ViaJump       bool   `json:"viaJump"`       // route bootstrap through the jump host
@@ -56,12 +65,69 @@ func (h *handler) enroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password is required for password bootstrap")
 		return
 	}
+	if req.Method == "key" && req.PrivateKey == "" {
+		writeError(w, http.StatusBadRequest, "private key is required for key bootstrap")
+		return
+	}
 	res, err := h.svc.Enroll(r.Context(), p.SessionID, host, &p.UserID, EnrollParams{
 		Method: req.Method, BootstrapUser: req.BootstrapUser, Password: req.Password,
+		PrivateKey: req.PrivateKey, KeyPassphrase: req.KeyPassphrase,
 		SudoPassword: req.SudoPassword, WGEndpoint: req.WGEndpoint, ViaJump: req.ViaJump,
 	})
 	if err != nil {
 		// Surface the failed job so the UI can show which step failed.
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// enrollScript returns the host bootstrap script for the no-install flow as
+// text/plain, so it can be piped straight into `ssh user@host sudo bash`.
+func (h *handler) enrollScript(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r)
+	hostID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid host id")
+		return
+	}
+	host, err := h.d.Store.GetHost(r.Context(), hostID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	script, err := h.svc.EnrollScript(r.Context(), p.SessionID, host, &p.UserID, r.URL.Query().Get("wgEndpoint"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(script))
+}
+
+// enrollFinish completes the no-install flow using the host public key the
+// operator pasted from the bootstrap script output.
+func (h *handler) enrollFinish(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r)
+	hostID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid host id")
+		return
+	}
+	host, err := h.d.Store.GetHost(r.Context(), hostID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	var req struct {
+		HostPublicKey string `json:"hostPublicKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	res, err := h.svc.FinishScriptEnroll(r.Context(), p.SessionID, host, &p.UserID, req.HostPublicKey)
+	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}

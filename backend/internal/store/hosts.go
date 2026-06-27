@@ -143,6 +143,8 @@ func (s *Store) ListAccessibleHosts(ctx context.Context, userID uuid.UUID, isSup
 		SELECT `+hostCols+` FROM hosts WHERE id IN (
 			SELECT hg.host_id FROM user_groups ug JOIN host_groups hg ON hg.group_id=ug.group_id WHERE ug.user_id=$1
 			UNION
+			SELECT host_id FROM host_users WHERE user_id=$1
+			UNION
 			SELECT host_id FROM temporary_permissions WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>now() AND host_id IS NOT NULL
 			UNION
 			SELECT hg.host_id FROM temporary_permissions tp JOIN host_groups hg ON hg.group_id=tp.group_id

@@ -96,6 +96,40 @@ func (s *Store) ListUserSessions(ctx context.Context, userID uuid.UUID) ([]model
 	return out, rows.Err()
 }
 
+// ListStaleSessions returns active (non-revoked, unexpired) sessions that have
+// gone idle past idleTTL or exceeded the absolute lifetime absoluteTTL. A zero
+// duration disables that bound. This drives the background reaper so live but
+// idle terminal/SFTP connections are torn down even when the owning user makes
+// no further HTTP requests (which would otherwise lazily trigger the check).
+func (s *Store) ListStaleSessions(ctx context.Context, idleTTL, absoluteTTL time.Duration) ([]models.Session, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, COALESCE(host(ip),''), user_agent, mfa_passed, created_at,
+		       last_seen_at, expires_at, revoked_at
+		FROM sessions
+		WHERE revoked_at IS NULL
+		  AND expires_at > now()
+		  AND (
+		        ($1 > 0 AND last_seen_at < now() - make_interval(secs => $1))
+		     OR ($2 > 0 AND created_at   < now() - make_interval(secs => $2))
+		      )
+		ORDER BY last_seen_at ASC`,
+		idleTTL.Seconds(), absoluteTTL.Seconds())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Session
+	for rows.Next() {
+		var sess models.Session
+		if err := rows.Scan(&sess.ID, &sess.UserID, &sess.IP, &sess.UserAgent, &sess.MFAPassed,
+			&sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.RevokedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
 // RecordAuthEvent appends a login/security event.
 func (s *Store) RecordAuthEvent(ctx context.Context, e models.AuthEvent) error {
 	_, err := s.pool.Exec(ctx, `

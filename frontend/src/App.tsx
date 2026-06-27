@@ -17,6 +17,7 @@ import { AuditPage } from "./pages/AuditPage";
 import { ApprovalsPage } from "./pages/ApprovalsPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { TerminalPage } from "./pages/TerminalPage";
+import { TerminalsPage } from "./pages/TerminalsPage";
 import { FilesPage } from "./pages/FilesPage";
 import { SecurityPage } from "./pages/SecurityPage";
 import { JobsPage } from "./pages/JobsPage";
@@ -50,6 +51,7 @@ export function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route index element={<DashboardPage />} />
+            <Route path="terminals" element={<ProtectedRoute permission="Host.Connect"><TerminalsPage /></ProtectedRoute>} />
             <Route path="hosts" element={<ProtectedRoute permission="Host.View"><HostsPage /></ProtectedRoute>} />
             <Route path="sessions" element={<ProtectedRoute permission="Session.Replay"><SessionsPage /></ProtectedRoute>} />
             <Route path="approvals" element={<ApprovalsPage />} />

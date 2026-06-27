@@ -76,8 +76,42 @@ func (s *Store) UserGroupNames(ctx context.Context, userID uuid.UUID) ([]string,
 		WHERE ug.user_id=$1 ORDER BY g.name`, userID)
 }
 
-// UserCanAccessHost reports whether a user has access to a host through any
-// shared group membership OR an active (non-expired) temporary permission.
+// AddUserToHost grants a user direct access to an individual host.
+func (s *Store) AddUserToHost(ctx context.Context, hostID, userID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO host_users (host_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, hostID, userID)
+	return err
+}
+
+// RemoveUserFromHost revokes a user's direct access to a host.
+func (s *Store) RemoveUserFromHost(ctx context.Context, hostID, userID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM host_users WHERE host_id=$1 AND user_id=$2`, hostID, userID)
+	return err
+}
+
+// HostDirectUsers lists users granted direct (non-group) access to a host.
+func (s *Store) HostDirectUsers(ctx context.Context, hostID uuid.UUID) ([]models.User, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT u.id, u.username, COALESCE(u.display_name,''), COALESCE(u.email,'')
+		FROM host_users hu JOIN users u ON u.id = hu.user_id
+		WHERE hu.host_id = $1 ORDER BY u.username`, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.User
+	for rows.Next() {
+		var u models.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UserCanAccessHost reports whether a user has access to a host through a shared
+// group, a direct host grant, OR an active (non-expired) temporary permission.
 func (s *Store) UserCanAccessHost(ctx context.Context, userID, hostID uuid.UUID) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx, `
@@ -86,6 +120,10 @@ func (s *Store) UserCanAccessHost(ctx context.Context, userID, hostID uuid.UUID)
 			SELECT 1 FROM user_groups ug
 			JOIN host_groups hg ON hg.group_id = ug.group_id
 			WHERE ug.user_id = $1 AND hg.host_id = $2
+			UNION
+			-- permanent: direct user-to-host grant
+			SELECT 1 FROM host_users hu
+			WHERE hu.user_id = $1 AND hu.host_id = $2
 			UNION
 			-- temporary: direct host grant still active
 			SELECT 1 FROM temporary_permissions tp

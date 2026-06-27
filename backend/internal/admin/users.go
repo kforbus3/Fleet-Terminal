@@ -244,6 +244,54 @@ func (h *handler) loginHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
+// setRequireMFA toggles whether a user must hold a confirmed second factor. When
+// turned on, the user is forced to enroll at their next login before a session
+// is issued.
+func (h *handler) setRequireMFA(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	var req struct {
+		Require bool `json:"require"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.d.Store.SetUserRequireMFA(r.Context(), id, req.Require); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update user")
+		return
+	}
+	h.audit(r, "user.require_mfa", "user", id.String(), map[string]any{"require": req.Require})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "updated", "requireMfa": req.Require})
+}
+
+// userHosts lists the hosts a user can currently reach (group, direct, or active
+// temporary grant) — the at-a-glance access view. Super admins reach every host.
+func (h *handler) userHosts(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	u, err := h.d.Store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	hosts, err := h.d.Store.ListAccessibleHosts(r.Context(), id, u.IsSuperAdmin)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load hosts")
+		return
+	}
+	if hosts == nil {
+		hosts = []models.Host{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": hosts, "isSuperAdmin": u.IsSuperAdmin})
+}
+
 func (h *handler) assignRole(w http.ResponseWriter, r *http.Request) {
 	userID, err1 := uuid.Parse(chi.URLParam(r, "id"))
 	roleID, err2 := uuid.Parse(chi.URLParam(r, "roleId"))

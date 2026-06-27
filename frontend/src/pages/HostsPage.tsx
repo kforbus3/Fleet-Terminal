@@ -13,12 +13,18 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import CableIcon from "@mui/icons-material/Cable";
 import TerminalIcon from "@mui/icons-material/Terminal";
 import FolderIcon from "@mui/icons-material/Folder";
+import LockPersonIcon from "@mui/icons-material/LockPerson";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { Alert, CircularProgress, List, ListItem, ListItemText } from "@mui/material";
+import { MenuItem, ListItemSecondaryAction, Divider } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createHost, deleteHost, enrollHost, listHosts, nextWGAddress,
+  addHostGroup, addHostUser, createHost, deleteHost, enrollHost, finishEnroll,
+  getHostAccess, listHosts, nextWGAddress, removeHostGroup, removeHostUser,
   type EnrollmentResult, type EnrollParams, type Host, type HostInput,
 } from "../api/hosts";
+import { listGroups, listUsers } from "../api/admin";
+import { useAuthStore } from "../store/auth";
 import {
   Checkbox, FormControl, FormControlLabel, FormLabel, Radio, RadioGroup,
 } from "@mui/material";
@@ -184,6 +190,7 @@ export function HostsPage() {
   const [enrollError, setEnrollError] = useState<string | null>(null);
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [enrollTarget, setEnrollTarget] = useState<Host | null>(null);
+  const [accessTarget, setAccessTarget] = useState<Host | null>(null);
 
   const createMut = useMutation({
     mutationFn: createHost,
@@ -208,6 +215,25 @@ export function HostsPage() {
     onError: (err: unknown) => {
       const e = err as { response?: { data?: { error?: string } } };
       setEnrollError(e.response?.data?.error ?? "Enrollment failed.");
+    },
+  });
+
+  // No-install (ssh-pipe) completion: reuses the enrollment result dialog.
+  const finishMut = useMutation({
+    mutationFn: ({ id, hostPublicKey }: { id: string; hostPublicKey: string }) => finishEnroll(id, hostPublicKey),
+    onMutate: () => {
+      setEnrollTarget(null);
+      setEnrollOpen(true);
+      setEnrollResult(null);
+      setEnrollError(null);
+    },
+    onSuccess: (res) => {
+      setEnrollResult(res);
+      void qc.invalidateQueries({ queryKey: ["hosts"] });
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: { error?: string } } };
+      setEnrollError(e.response?.data?.error ?? "Finish failed.");
     },
   });
 
@@ -273,7 +299,7 @@ export function HostsPage() {
       valueFormatter: (value) => fmtDate(value ? String(value) : undefined),
     },
     {
-      field: "actions", headerName: "Actions", width: 190, sortable: false, filterable: false,
+      field: "actions", headerName: "Actions", width: 230, sortable: false, filterable: false,
       renderCell: (params) => (
         <Stack direction="row" spacing={0.5}>
           <Tooltip title="Open terminal in a new tab">
@@ -290,6 +316,11 @@ export function HostsPage() {
               onClick={() => window.open(`/files/${params.row.id}`, "_blank", "noopener")}
             >
               <FolderIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Manage access (groups & users)">
+            <IconButton size="small" onClick={() => setAccessTarget(params.row)}>
+              <LockPersonIcon fontSize="small" />
             </IconButton>
           </Tooltip>
           <Tooltip title={params.row.enrolled ? "Re-enroll (provision WireGuard)" : "Enroll (provision WireGuard)"}>
@@ -369,6 +400,7 @@ export function HostsPage() {
         host={enrollTarget}
         onClose={() => setEnrollTarget(null)}
         onSubmit={(params) => enrollTarget && enrollMut.mutate({ id: enrollTarget.id, params })}
+        onPipeFinish={(hostPublicKey) => enrollTarget && finishMut.mutate({ id: enrollTarget.id, hostPublicKey })}
       />
       <EnrollDialog
         open={enrollOpen}
@@ -377,7 +409,104 @@ export function HostsPage() {
         error={enrollError}
         onClose={() => setEnrollOpen(false)}
       />
+      <HostAccessDialog host={accessTarget} onClose={() => setAccessTarget(null)} />
     </Box>
+  );
+}
+
+// HostAccessDialog manages who can reach a host: the groups it belongs to and
+// individual users granted direct access. Access to a host is the union of
+// these (plus any active just-in-time grants).
+function HostAccessDialog({ host, onClose }: { host: Host | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const hostId = host?.id ?? "";
+  const [userToAdd, setUserToAdd] = useState("");
+  const [groupToAdd, setGroupToAdd] = useState("");
+
+  const { data: access } = useQuery({
+    queryKey: ["host-access", hostId],
+    queryFn: () => getHostAccess(hostId),
+    enabled: Boolean(host),
+  });
+  const { data: allGroups } = useQuery({ queryKey: ["groups"], queryFn: listGroups, enabled: Boolean(host) });
+  const { data: allUsers } = useQuery({ queryKey: ["users"], queryFn: listUsers, enabled: Boolean(host) });
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["host-access", hostId] });
+    void qc.invalidateQueries({ queryKey: ["hosts"] });
+  };
+  const mut = (fn: () => Promise<void>) => async () => { await fn(); refresh(); };
+
+  const addUserMut = useMutation({ mutationFn: (uid: string) => addHostUser(hostId, uid), onSuccess: () => { setUserToAdd(""); refresh(); } });
+  const rmUserMut = useMutation({ mutationFn: (uid: string) => removeHostUser(hostId, uid), onSuccess: refresh });
+  const addGroupMut = useMutation({ mutationFn: (gid: string) => addHostGroup(hostId, gid), onSuccess: () => { setGroupToAdd(""); refresh(); } });
+  const rmGroupMut = useMutation({ mutationFn: (gname: string) => {
+    const g = (allGroups ?? []).find((x) => x.name === gname);
+    return g ? removeHostGroup(hostId, g.id) : Promise.resolve();
+  }, onSuccess: refresh });
+
+  const grantedGroupNames = new Set(access?.groups ?? []);
+  const grantedUserIds = new Set((access?.users ?? []).map((u) => u.id));
+  const availableGroups = (allGroups ?? []).filter((g) => !grantedGroupNames.has(g.name));
+  const availableUsers = (allUsers ?? []).filter((u) => !grantedUserIds.has(u.id));
+
+  return (
+    <Dialog open={Boolean(host)} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Access — {host?.hostname}</DialogTitle>
+      <DialogContent dividers>
+        <Typography variant="subtitle2" gutterBottom>Groups</Typography>
+        <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", mb: 1 }}>
+          {(access?.groups ?? []).length === 0 && (
+            <Typography variant="body2" color="text.secondary">No groups assigned.</Typography>
+          )}
+          {(access?.groups ?? []).map((g) => (
+            <Chip key={g} label={g} onDelete={mut(() => rmGroupMut.mutateAsync(g))} />
+          ))}
+        </Stack>
+        <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+          <TextField
+            select size="small" label="Add group" value={groupToAdd}
+            onChange={(e) => setGroupToAdd(e.target.value)} sx={{ minWidth: 220 }}
+          >
+            {availableGroups.length === 0 && <MenuItem value="" disabled>No more groups</MenuItem>}
+            {availableGroups.map((g) => <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>)}
+          </TextField>
+          <Button variant="outlined" disabled={!groupToAdd || addGroupMut.isPending} onClick={() => addGroupMut.mutate(groupToAdd)}>Add</Button>
+        </Stack>
+
+        <Divider sx={{ my: 1 }} />
+
+        <Typography variant="subtitle2" gutterBottom>Individual users (direct access)</Typography>
+        <List dense>
+          {(access?.users ?? []).length === 0 && (
+            <Typography variant="body2" color="text.secondary">No users granted direct access.</Typography>
+          )}
+          {(access?.users ?? []).map((u) => (
+            <ListItem key={u.id} disableGutters>
+              <ListItemText primary={u.username} secondary={u.displayName || u.email} />
+              <ListItemSecondaryAction>
+                <IconButton edge="end" size="small" color="error" disabled={rmUserMut.isPending} onClick={() => rmUserMut.mutate(u.id)}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </ListItemSecondaryAction>
+            </ListItem>
+          ))}
+        </List>
+        <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+          <TextField
+            select size="small" label="Add user" value={userToAdd}
+            onChange={(e) => setUserToAdd(e.target.value)} sx={{ minWidth: 220 }}
+          >
+            {availableUsers.length === 0 && <MenuItem value="" disabled>No more users</MenuItem>}
+            {availableUsers.map((u) => <MenuItem key={u.id} value={u.id}>{u.username}</MenuItem>)}
+          </TextField>
+          <Button variant="outlined" disabled={!userToAdd || addUserMut.isPending} onClick={() => addUserMut.mutate(userToAdd)}>Add</Button>
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
@@ -385,18 +514,32 @@ export function HostsPage() {
 // an SSH password (installs CA trust + WireGuard on a brand-new host), or the
 // session certificate when the host already trusts the Fleet CA.
 function EnrollCredsDialog({
-  host, onClose, onSubmit,
+  host, onClose, onSubmit, onPipeFinish,
 }: {
   host: Host | null;
   onClose: () => void;
   onSubmit: (params: EnrollParams) => void;
+  onPipeFinish: (hostPublicKey: string) => void;
 }) {
-  const [method, setMethod] = useState<"password" | "trusted">("password");
+  const [method, setMethod] = useState<"password" | "key" | "agent" | "pipe" | "trusted">("password");
   const [bootstrapUser, setBootstrapUser] = useState("root");
   const [password, setPassword] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
+  const [keyPassphrase, setKeyPassphrase] = useState("");
   const [sudoPassword, setSudoPassword] = useState("");
   const [wgEndpoint, setWgEndpoint] = useState("");
   const [viaJump, setViaJump] = useState(false);
+  // No-install (ssh-pipe) flow state.
+  const [sshTarget, setSshTarget] = useState("");
+  const [hostPubKey, setHostPubKey] = useState("");
+  const token = useAuthStore((s) => s.accessToken);
+  const scriptUrl =
+    `${window.location.origin}/api/v1/hosts/${host?.id ?? "<host-id>"}/enroll/script` +
+    (wgEndpoint ? `?wgEndpoint=${encodeURIComponent(wgEndpoint)}` : "");
+  const pipeCommand =
+    `curl -fsSL -H "Authorization: Bearer ${token ?? "<YOUR_TOKEN>"}" \\\n` +
+    `  "${scriptUrl}" \\\n` +
+    `  | ssh ${sshTarget || "<user@host>"} sudo bash`;
 
   // Pre-fill the jump host's WireGuard endpoint with the configured default.
   const { data: nextWG } = useQuery({ queryKey: ["next-wg"], queryFn: nextWGAddress, enabled: Boolean(host) });
@@ -414,10 +557,22 @@ function EnrollCredsDialog({
         </Typography>
         <FormControl sx={{ mb: 2 }}>
           <FormLabel>How should we reach this host first?</FormLabel>
-          <RadioGroup value={method} onChange={(e) => setMethod(e.target.value as "password" | "trusted")}>
+          <RadioGroup value={method} onChange={(e) => setMethod(e.target.value as "password" | "key" | "agent" | "trusted")}>
             <FormControlLabel
               value="password" control={<Radio />}
               label="SSH password — install everything (new/existing host with no setup)"
+            />
+            <FormControlLabel
+              value="key" control={<Radio />}
+              label="SSH private key — for hosts with password auth disabled (uses a key already in authorized_keys)"
+            />
+            <FormControlLabel
+              value="agent" control={<Radio />}
+              label="SSH agent — run a small bridge from your laptop; the key never leaves your machine"
+            />
+            <FormControlLabel
+              value="pipe" control={<Radio />}
+              label="No install — pipe a script through your own ssh (nothing to install, key stays local)"
             />
             <FormControlLabel
               value="trusted" control={<Radio />}
@@ -444,6 +599,95 @@ function EnrollCredsDialog({
             />
           </Stack>
         )}
+        {method === "agent" && (
+          <Alert severity="info" sx={{ mt: 1 }}>
+            The browser can't reach your SSH agent, so run the bridge from your
+            laptop — your key never leaves your machine (only signatures are
+            forwarded). With your key loaded (<code>ssh-add</code>), run:
+            <Box
+              component="pre"
+              sx={{ mt: 1, p: 1, bgcolor: "action.hover", borderRadius: 1, fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+            >
+{`fleet-enroll-agent \\
+  -url ${window.location.origin} \\
+  -host ${host?.id ?? "<host-id>"} \\
+  -token <YOUR_TOKEN> \\
+  -bootstrap-user <ssh-user>`}
+            </Box>
+            Pass <code>-via-jump</code> if the backend can't reach the host
+            directly. Build the bridge with <code>make enroll-agent</code>.
+          </Alert>
+        )}
+        {method === "pipe" && (
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Nothing to install. <b>Step 1:</b> run this in your terminal — it
+              fetches a bootstrap script and pipes it through <i>your own</i> ssh.
+              Your key never leaves your machine.
+            </Typography>
+            <TextField
+              label="Your SSH target (user@host)" value={sshTarget}
+              onChange={(e) => setSshTarget(e.target.value)}
+              placeholder="opsadmin@web-01" size="small"
+              helperText="The host login you already use; needs sudo on the host"
+            />
+            <Box sx={{ position: "relative" }}>
+              <Box
+                component="pre"
+                sx={{ p: 1.5, pr: 5, bgcolor: "action.hover", borderRadius: 1, fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-all", m: 0 }}
+              >
+                {pipeCommand}
+              </Box>
+              <Tooltip title="Copy command">
+                <IconButton
+                  size="small" sx={{ position: "absolute", top: 4, right: 4 }}
+                  onClick={() => navigator.clipboard?.writeText(pipeCommand)}
+                >
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+            <Typography variant="body2" color="text.secondary">
+              <b>Step 2:</b> the script prints a <b>host public key</b> at the end.
+              Paste it here and finish — Fleet adds the jump-host peer and verifies
+              certificate login.
+            </Typography>
+            <TextField
+              label="Host public key" value={hostPubKey}
+              onChange={(e) => setHostPubKey(e.target.value)}
+              fullWidth size="small"
+              placeholder="base64 key printed by the script"
+              inputProps={{ style: { fontFamily: "monospace", fontSize: 12 } }}
+            />
+          </Stack>
+        )}
+        {method === "key" && (
+          <Stack spacing={2}>
+            <TextField
+              label="SSH user" value={bootstrapUser}
+              onChange={(e) => setBootstrapUser(e.target.value)}
+              helperText="The user whose key is in the host's authorized_keys (e.g. root or a sudo user)"
+            />
+            <TextField
+              label="Private key (PEM)" value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)} autoFocus
+              multiline minRows={4} fullWidth
+              placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----"}
+              helperText="An existing key already trusted on the host. Used once over HTTPS for bootstrap; never stored."
+              inputProps={{ style: { fontFamily: "monospace", fontSize: 12 } }}
+            />
+            <TextField
+              label="Key passphrase (optional)" type="password" value={keyPassphrase}
+              onChange={(e) => setKeyPassphrase(e.target.value)}
+              helperText="Only if the private key is encrypted"
+            />
+            <TextField
+              label="Sudo password (optional)" type="password" value={sudoPassword}
+              onChange={(e) => setSudoPassword(e.target.value)}
+              helperText="Only if this user's sudo requires a password (leave blank for root or passwordless sudo)"
+            />
+          </Stack>
+        )}
         <TextField
           fullWidth sx={{ mt: 2 }}
           label="Jump host WireGuard endpoint" value={wgEndpoint}
@@ -458,13 +702,23 @@ function EnrollCredsDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button
-          variant="contained"
-          disabled={method === "password" && password === ""}
-          onClick={() => onSubmit({ method, bootstrapUser, password, sudoPassword, wgEndpoint, viaJump })}
-        >
-          Enroll
-        </Button>
+        {method === "pipe" ? (
+          <Button
+            variant="contained"
+            disabled={hostPubKey.trim() === ""}
+            onClick={() => onPipeFinish(hostPubKey.trim())}
+          >
+            Finish enrollment
+          </Button>
+        ) : (
+          <Button
+            variant="contained"
+            disabled={method === "agent" || (method === "password" && password === "") || (method === "key" && privateKey.trim() === "")}
+            onClick={() => onSubmit({ method, bootstrapUser, password, privateKey, keyPassphrase, sudoPassword, wgEndpoint, viaJump })}
+          >
+            Enroll
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );

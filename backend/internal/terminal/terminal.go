@@ -122,7 +122,8 @@ func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal
 	var gwConn *sshgw.Conn
 	var err error
 	for _, addr := range candidates {
-		gwConn, err = h.gw.Dial(ctx, p.SessionID.String(), addr, host.SSHPort, host.SSHUser)
+		// Use a certificate unique to this (user, host) pair.
+		gwConn, err = h.gw.DialForHost(ctx, p.SessionID, p.UserID, host.ID, p.Username, host.Hostname, addr, host.SSHPort, host.SSHUser)
 		if err == nil {
 			break
 		}
@@ -161,7 +162,7 @@ func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal
 	// Persist the SSH session record + start recording. Record the certificate
 	// serial used, so the session is auditable back to a specific issued cert.
 	var certSerial *uint64
-	if serial, ok := h.gw.CredentialSerial(p.SessionID.String()); ok {
+	if serial, ok := h.gw.HostCredentialSerial(p.SessionID, host.ID); ok {
 		certSerial = &serial
 	}
 	rec, _ := h.d.Store.CreateSSHSession(ctx, store.SSHSessionInput{

@@ -52,6 +52,30 @@ backend-build: ## Compile the backend in a throwaway Go container
 	docker run --rm -v $(PWD)/backend:/src -w /src golang:1.23-alpine \
 	  sh -c "apk add --no-cache git >/dev/null && GOFLAGS=-mod=mod go build ./..."
 
+.PHONY: enroll-agent
+enroll-agent: ## Build the SSH-agent enrollment bridge for this machine's platform
+	docker run --rm -v $(PWD)/backend:/src -w /src -e CGO_ENABLED=0 golang:1.23-alpine \
+	  sh -c "apk add --no-cache git >/dev/null && GOFLAGS=-mod=mod go build -o /src/bin/fleet-enroll-agent ./cmd/fleet-enroll-agent"
+	@echo "Built backend/bin/fleet-enroll-agent — distribute to operators."
+
+.PHONY: enroll-agent-all
+enroll-agent-all: ## Cross-compile the bridge for macOS/Linux/Windows (operators' laptops)
+	docker run --rm -v $(PWD)/backend:/src -w /src -e CGO_ENABLED=0 golang:1.23-alpine sh -c '\
+	  apk add --no-cache git >/dev/null; \
+	  set -e; \
+	  for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do \
+	    os=$${t%/*}; arch=$${t#*/}; ext=; [ "$$os" = windows ] && ext=.exe; \
+	    out=/src/bin/fleet-enroll-agent-$$os-$$arch$$ext; \
+	    echo "building $$out"; \
+	    GOOS=$$os GOARCH=$$arch GOFLAGS=-mod=mod go build -trimpath -ldflags "-s -w" -o $$out ./cmd/fleet-enroll-agent; \
+	  done'
+	@echo "Built backend/bin/fleet-enroll-agent-* — distribute the right one per operator:"
+	@echo "  macOS Apple Silicon: fleet-enroll-agent-darwin-arm64"
+	@echo "  macOS Intel:         fleet-enroll-agent-darwin-amd64"
+	@echo "  Linux x86_64:        fleet-enroll-agent-linux-amd64"
+	@echo "  Linux ARM64:         fleet-enroll-agent-linux-arm64"
+	@echo "  Windows x86_64:      fleet-enroll-agent-windows-amd64.exe"
+
 .PHONY: test
 test: backend-test frontend-test ## Run all tests
 

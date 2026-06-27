@@ -40,6 +40,23 @@ func (s *Store) SetSetting(ctx context.Context, key string, value any) error {
 	return err
 }
 
+// MFAGloballyRequired reports whether the "require_mfa" setting is enabled,
+// which forces every user to hold a confirmed second factor. Stored as a JSON
+// object {"enabled": bool}; absent/false means MFA stays optional per user.
+func (s *Store) MFAGloballyRequired(ctx context.Context) bool {
+	raw, err := s.GetSetting(ctx, "require_mfa")
+	if err != nil {
+		return false
+	}
+	var v struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return false
+	}
+	return v.Enabled
+}
+
 // ListSettings returns every setting keyed by name.
 func (s *Store) ListSettings(ctx context.Context) (map[string]json.RawMessage, error) {
 	rows, err := s.pool.Query(ctx, `SELECT key, value FROM settings ORDER BY key`)

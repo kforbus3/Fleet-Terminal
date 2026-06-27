@@ -18,6 +18,7 @@ import ShieldIcon from "@mui/icons-material/Shield";
 import WorkHistoryIcon from "@mui/icons-material/WorkHistory";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
+import MenuIcon from "@mui/icons-material/Menu";
 import { Link as RouterLink, Outlet, useLocation } from "react-router-dom";
 import { useUIStore } from "../store/ui";
 
@@ -46,12 +47,19 @@ export function AppLayout() {
   const { pathname } = useLocation();
   const mode = useUIStore((s) => s.mode);
   const toggleMode = useUIStore((s) => s.toggleMode);
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
 
   return (
     <Box sx={{ display: "flex" }}>
       <CssBaseline />
       <AppBar position="fixed" sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
         <Toolbar variant="dense">
+          <Tooltip title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
+            <IconButton color="inherit" edge="start" onClick={toggleSidebar} sx={{ mr: 1 }}>
+              <MenuIcon />
+            </IconButton>
+          </Tooltip>
           <TerminalIcon sx={{ mr: 1 }} />
           <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 600 }}>
             Fleet Terminal
@@ -65,10 +73,21 @@ export function AppLayout() {
       </AppBar>
       <Drawer
         variant="permanent"
+        open={sidebarOpen}
         sx={{
-          width: DRAWER_WIDTH,
+          width: sidebarOpen ? DRAWER_WIDTH : 0,
           flexShrink: 0,
-          [`& .MuiDrawer-paper`]: { width: DRAWER_WIDTH, boxSizing: "border-box" },
+          whiteSpace: "nowrap",
+          "& .MuiDrawer-paper": {
+            width: sidebarOpen ? DRAWER_WIDTH : 0,
+            boxSizing: "border-box",
+            overflowX: "hidden",
+            transition: (t) =>
+              t.transitions.create("width", {
+                easing: t.transitions.easing.sharp,
+                duration: t.transitions.duration.enteringScreen,
+              }),
+          },
         }}
       >
         <Toolbar variant="dense" />
@@ -92,7 +111,7 @@ export function AppLayout() {
           </List>
         </Box>
       </Drawer>
-      <Box component="main" sx={{ flexGrow: 1, p: 3, mt: 6 }}>
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, p: 3, mt: 6 }}>
         <Outlet />
       </Box>
     </Box>

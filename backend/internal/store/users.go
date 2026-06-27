@@ -53,18 +53,24 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*models.Use
 }
 
 const userCols = `id, username, COALESCE(email,''), display_name, is_super_admin,
-	is_disabled, email_verified, must_change_pw, failed_logins, locked_until,
+	is_disabled, email_verified, must_change_pw, require_mfa, failed_logins, locked_until,
 	last_login_at, created_at, updated_at`
 
 func scanUser(row pgx.Row) (*models.User, error) {
 	var u models.User
 	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsSuperAdmin,
-		&u.IsDisabled, &u.EmailVerified, &u.MustChangePw, &u.FailedLogins, &u.LockedUntil,
+		&u.IsDisabled, &u.EmailVerified, &u.MustChangePw, &u.RequireMFA, &u.FailedLogins, &u.LockedUntil,
 		&u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
 	return &u, nil
+}
+
+// SetUserRequireMFA toggles whether a user must have a confirmed second factor.
+func (s *Store) SetUserRequireMFA(ctx context.Context, id uuid.UUID, require bool) error {
+	_, err := s.pool.Exec(ctx, `UPDATE users SET require_mfa=$2, updated_at=now() WHERE id=$1`, id, require)
+	return err
 }
 
 // GetUserByUsername loads a user by (case-insensitive) username.

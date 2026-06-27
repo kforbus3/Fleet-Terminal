@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -37,6 +38,7 @@ import (
 	"github.com/fleet-terminal/backend/internal/jobs"
 	"github.com/fleet-terminal/backend/internal/krl"
 	"github.com/fleet-terminal/backend/internal/livesessions"
+	"github.com/fleet-terminal/backend/internal/ratelimit"
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/monitor"
 	"github.com/fleet-terminal/backend/internal/sessionsapi"
@@ -75,7 +77,7 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 	caMgr := ca.New(st, cfg)
 	vault := identity.NewVault()
 	issuer := identity.NewIssuer(st, caMgr, cfg, log, vault)
-	gateway := sshgw.New(cfg, log, vault)
+	gateway := sshgw.New(cfg, log, vault, issuer)
 
 	s := &Server{
 		Cfg: cfg, DB: db, Log: log, Version: version,
@@ -100,9 +102,10 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 		},
 		func(ctx context.Context, _ uuid.UUID, sessionID uuid.UUID, _ string) {
 			issuer.DestroySession(ctx, sessionID)
-			// Forcibly close any live terminal connections for this session.
+			// Forcibly close any live connections for this session — terminal
+			// PTYs and in-flight SFTP transfers both register here.
 			if n := s.Live.Close(sessionID); n > 0 {
-				log.Info("closed live terminal connections", "session", sessionID, "count", n)
+				log.Info("closed live connections", "session", sessionID, "count", n)
 			}
 		},
 	)
@@ -264,7 +267,8 @@ func (s *Server) retentionLoop(ctx context.Context) {
 	}
 }
 
-// reaperLoop periodically expires elapsed just-in-time access grants.
+// reaperLoop periodically expires elapsed just-in-time access grants and ends
+// idle/expired sessions (force-closing their live terminal/SFTP connections).
 func (s *Server) reaperLoop(ctx context.Context) {
 	deps := &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log, Auth: s.Auth}
 	t := time.NewTicker(1 * time.Minute)
@@ -276,6 +280,8 @@ func (s *Server) reaperLoop(ctx context.Context) {
 		case <-t.C:
 			approvals.Reaper(ctx, deps)
 			s.Jobs.Record("approval-expiry", nil)
+			s.Auth.ReapStaleSessions(ctx)
+			s.Jobs.Record("session-reaper", nil)
 		}
 	}
 }
@@ -335,8 +341,30 @@ func (s *Server) buildRouter() chi.Router {
 	r.Get("/version", s.handleVersion)
 	r.Handle("/metrics", promhttp.Handler())
 
+	// Per-IP rate limiting (defends against bots/abuse when internet-exposed).
+	// A stricter limit guards the unauthenticated auth/bootstrap endpoints; a
+	// looser one covers the rest of the API. health/ready/metrics are exempt so
+	// monitoring is never throttled.
+	general := ratelimit.New(s.Cfg.RateLimitPerMin, s.Cfg.RateLimitBurst)
+	authLimit := ratelimit.New(s.Cfg.AuthRateLimitPerMin, s.Cfg.AuthRateLimitBurst)
+	rateLimitMW := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			lim := general
+			if strings.HasPrefix(req.URL.Path, "/api/v1/auth") || strings.HasPrefix(req.URL.Path, "/api/v1/bootstrap") {
+				lim = authLimit
+			}
+			if !lim.Allow(ratelimit.KeyFromRequest(req)) {
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
+
 	// Versioned API surface. Module routers mount here.
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(rateLimitMW)
 		s.registerRoutes(api)
 	})
 

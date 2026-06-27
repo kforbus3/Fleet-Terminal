@@ -29,6 +29,10 @@ export interface LoginResponse {
   // Present when a second factor is required:
   mfaRequired?: boolean;
   challenge?: string;
+  // Present when MFA is mandatory but the user has not enrolled one yet. The
+  // setupToken authorizes one-time enrollment, after which login completes.
+  mfaEnrollmentRequired?: boolean;
+  setupToken?: string;
 }
 
 export interface MfaMethod {
@@ -67,6 +71,19 @@ export async function mfaConfirm(code: string): Promise<void> {
 
 export async function mfaDelete(id: string): Promise<void> {
   await api.delete(`/api/v1/auth/mfa/${id}`);
+}
+
+// Forced-enrollment flow (when MFA is mandatory but the user has no factor).
+// Gated by the login setupToken rather than a session.
+export async function mfaSetupBegin(setupToken: string): Promise<{ secret: string; otpauthUrl: string }> {
+  const { data } = await api.post<{ secret: string; otpauthUrl: string }>(
+    "/api/v1/auth/mfa/setup/begin", { setupToken });
+  return data;
+}
+
+export async function mfaSetupConfirm(setupToken: string, code: string): Promise<LoginResponse> {
+  const { data } = await api.post<LoginResponse>("/api/v1/auth/mfa/setup/confirm", { setupToken, code });
+  return data;
 }
 
 export interface MeResponse {

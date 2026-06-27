@@ -20,5 +20,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "jsdom",
+    // Vitest runs unit tests under src/. The e2e/ directory holds Playwright
+    // specs (run via `make e2e`), which must not be collected here.
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    exclude: ["e2e/**", "node_modules/**", "dist/**"],
   },
 });

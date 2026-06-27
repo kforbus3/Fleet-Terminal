@@ -105,6 +105,41 @@ export async function getHostStatusStats(): Promise<HostStatusStats> {
   return data;
 }
 
+// --- Host access management (groups + direct users) ---
+
+export interface HostAccessUser {
+  id: string;
+  username: string;
+  displayName?: string;
+  email?: string;
+}
+
+export interface HostAccess {
+  groups: string[];
+  users: HostAccessUser[];
+}
+
+export async function getHostAccess(id: string): Promise<HostAccess> {
+  const { data } = await api.get<HostAccess>(`/api/v1/hosts/${id}/access`);
+  return { groups: data.groups ?? [], users: data.users ?? [] };
+}
+
+export async function addHostUser(hostId: string, userId: string): Promise<void> {
+  await api.post(`/api/v1/hosts/${hostId}/users/${userId}`);
+}
+
+export async function removeHostUser(hostId: string, userId: string): Promise<void> {
+  await api.delete(`/api/v1/hosts/${hostId}/users/${userId}`);
+}
+
+export async function addHostGroup(hostId: string, groupId: string): Promise<void> {
+  await api.post(`/api/v1/hosts/${hostId}/groups/${groupId}`);
+}
+
+export async function removeHostGroup(hostId: string, groupId: string): Promise<void> {
+  await api.delete(`/api/v1/hosts/${hostId}/groups/${groupId}`);
+}
+
 export interface EnrollmentStep {
   name: string;
   status: string;
@@ -120,11 +155,16 @@ export interface EnrollmentResult {
 
 export interface EnrollParams {
   // "password" bootstraps a host with no prior setup (installs CA trust +
-  // WireGuard over an SSH password); "trusted" uses the session certificate on
-  // a host that already trusts the Fleet CA.
-  method: "password" | "trusted";
+  // WireGuard over an SSH password); "key" bootstraps using an existing SSH
+  // private key already trusted in the host's authorized_keys (for hosts with
+  // password auth disabled); "trusted" uses the session certificate on a host
+  // that already trusts the Fleet CA.
+  method: "password" | "key" | "agent" | "trusted";
   bootstrapUser?: string;
   password?: string;
+  // PEM private key + optional passphrase, for the "key" method.
+  privateKey?: string;
+  keyPassphrase?: string;
   // sudo password, when the bootstrap user has password-required sudo.
   sudoPassword?: string;
   // jump host's public WireGuard endpoint (host:port) the managed host dials.
@@ -138,5 +178,13 @@ export interface EnrollParams {
 // the tunnel + jump-host peer, and validates per-user certificate login.
 export async function enrollHost(id: string, params: EnrollParams): Promise<EnrollmentResult> {
   const { data } = await api.post<EnrollmentResult>(`/api/v1/hosts/${id}/enroll`, params);
+  return data;
+}
+
+// finishEnroll completes the no-install (ssh-pipe) flow: the operator ran the
+// bootstrap script through their own ssh and pastes the host's WireGuard public
+// key here; the backend adds the jump-host peer and verifies certificate login.
+export async function finishEnroll(id: string, hostPublicKey: string): Promise<EnrollmentResult> {
+  const { data } = await api.post<EnrollmentResult>(`/api/v1/hosts/${id}/enroll/finish`, { hostPublicKey });
   return data;
 }

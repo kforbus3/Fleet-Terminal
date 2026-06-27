@@ -12,9 +12,19 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Credential is a live ephemeral SSH identity bound to a browser session.
+// sessionScope is the host key for a session-level credential (the identity used
+// for the jump host, enrollment and system operations). Per-host credentials are
+// keyed by the managed host's id instead.
+var sessionScope = uuid.Nil
+
+// Credential is a live ephemeral SSH identity. It is bound to a browser session
+// and, for per-host certificates, to a specific managed host (HostID). A session
+// holds one session-scoped credential plus one unique credential per host it
+// connects to, so every (user, host) pair authenticates with a distinct key and
+// certificate serial.
 type Credential struct {
 	SessionID  uuid.UUID
+	HostID     uuid.UUID // uuid.Nil for the session-level credential
 	UserID     uuid.UUID
 	Username   string
 	Serial     uint64
@@ -32,44 +42,65 @@ func (c *Credential) CertSigner() ssh.Signer { return c.certSigner }
 // Certificate returns the issued certificate.
 func (c *Credential) Certificate() *ssh.Certificate { return c.cert }
 
-// Vault stores live credentials keyed by session id.
+// Vault stores live credentials keyed by session id, then by host id (with
+// uuid.Nil holding the session-level credential).
 type Vault struct {
 	mu    sync.RWMutex
-	creds map[uuid.UUID]*Credential
+	creds map[uuid.UUID]map[uuid.UUID]*Credential
 }
 
 // NewVault constructs an empty Vault.
-func NewVault() *Vault { return &Vault{creds: make(map[uuid.UUID]*Credential)} }
+func NewVault() *Vault {
+	return &Vault{creds: make(map[uuid.UUID]map[uuid.UUID]*Credential)}
+}
 
 func (v *Vault) put(c *Credential) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if existing, ok := v.creds[c.SessionID]; ok {
+	byHost, ok := v.creds[c.SessionID]
+	if !ok {
+		byHost = make(map[uuid.UUID]*Credential)
+		v.creds[c.SessionID] = byHost
+	}
+	if existing, ok := byHost[c.HostID]; ok {
 		existing.zero()
 	}
-	v.creds[c.SessionID] = c
+	byHost[c.HostID] = c
 }
 
-// Get returns the live credential for a session, if present and unexpired.
+// Get returns the session-level credential for a session, if present.
 func (v *Vault) Get(sessionID uuid.UUID) (*Credential, bool) {
+	return v.lookup(sessionID, sessionScope)
+}
+
+// GetHost returns the per-host credential for a session+host, if present.
+func (v *Vault) GetHost(sessionID, hostID uuid.UUID) (*Credential, bool) {
+	return v.lookup(sessionID, hostID)
+}
+
+func (v *Vault) lookup(sessionID, hostID uuid.UUID) (*Credential, bool) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	c, ok := v.creds[sessionID]
+	byHost, ok := v.creds[sessionID]
 	if !ok {
 		return nil, false
 	}
-	return c, true
+	c, ok := byHost[hostID]
+	return c, ok
 }
 
-// Destroy zeroizes and removes a session's credential (logout/idle/cleanup).
+// Destroy zeroizes and removes ALL of a session's credentials — the
+// session-level identity and every per-host identity (logout/idle/cleanup).
 func (v *Vault) Destroy(sessionID uuid.UUID) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	c, ok := v.creds[sessionID]
+	byHost, ok := v.creds[sessionID]
 	if !ok {
 		return false
 	}
-	c.zero()
+	for _, c := range byHost {
+		c.zero()
+	}
 	delete(v.creds, sessionID)
 	return true
 }

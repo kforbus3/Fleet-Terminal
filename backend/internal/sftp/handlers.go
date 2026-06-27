@@ -45,44 +45,60 @@ type handler struct {
 	gw *sshgw.Gateway
 }
 
-// connect opens an SFTP client to the host through the gateway, after access checks.
-func (h *handler) connect(w http.ResponseWriter, r *http.Request) (*pkgsftp.Client, *sshgw.Conn, *auth.Principal, *models.Host, bool) {
-	p := auth.MustPrincipal(r)
+// connect opens an SFTP client to the host through the gateway, after access
+// checks. The connection is registered in the live-session registry so an
+// in-flight transfer is aborted if the session is revoked (disable/terminate/
+// logout). The returned cleanup deregisters and closes everything.
+func (h *handler) connect(w http.ResponseWriter, r *http.Request) (client *pkgsftp.Client, p *auth.Principal, host *models.Host, cleanup func(), ok bool) {
+	noop := func() {}
+	p = auth.MustPrincipal(r)
 	hostID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid host id")
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, noop, false
 	}
 	if !p.IsSuperAdmin {
-		ok, aerr := h.d.Store.UserCanAccessHost(r.Context(), p.UserID, hostID)
-		if aerr != nil || !ok {
+		allowed, aerr := h.d.Store.UserCanAccessHost(r.Context(), p.UserID, hostID)
+		if aerr != nil || !allowed {
 			writeError(w, http.StatusForbidden, "not authorized for host")
-			return nil, nil, nil, nil, false
+			return nil, nil, nil, noop, false
 		}
 	}
-	host, err := h.d.Store.GetHost(r.Context(), hostID)
+	host, err = h.d.Store.GetHost(r.Context(), hostID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "host not found")
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, noop, false
 	}
 	conn, derr := h.dial(r, p, host)
 	if derr != nil {
 		writeError(w, http.StatusBadGateway, "connection failed: "+derr.Error())
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, noop, false
 	}
 	client, serr := pkgsftp.NewClient(conn.Client)
 	if serr != nil {
 		conn.Close()
 		writeError(w, http.StatusBadGateway, "sftp subsystem failed: "+serr.Error())
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, noop, false
 	}
-	return client, conn, p, host, true
+	var dereg func()
+	if h.d.Live != nil {
+		dereg = h.d.Live.Register(p.SessionID, func() { conn.Close() })
+	}
+	cleanup = func() {
+		if dereg != nil {
+			dereg()
+		}
+		_ = client.Close()
+		conn.Close()
+	}
+	return client, p, host, cleanup, true
 }
 
 func (h *handler) dial(r *http.Request, p *auth.Principal, host *models.Host) (*sshgw.Conn, error) {
 	var lastErr error
 	for _, addr := range dedupe([]string{host.WGAddress, host.Address, host.Hostname}) {
-		conn, err := h.gw.Dial(r.Context(), p.SessionID.String(), addr, host.SSHPort, host.SSHUser)
+		// Use a certificate unique to this (user, host) pair.
+		conn, err := h.gw.DialForHost(r.Context(), p.SessionID, p.UserID, host.ID, p.Username, host.Hostname, addr, host.SSHPort, host.SSHUser)
 		if err == nil {
 			return conn, nil
 		}
@@ -103,12 +119,11 @@ type entry struct {
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
-	client, conn, _, _, ok := h.connect(w, r)
+	client, _, _, cleanup, ok := h.connect(w, r)
 	if !ok {
 		return
 	}
-	defer conn.Close()
-	defer client.Close()
+	defer cleanup()
 
 	dir := r.URL.Query().Get("path")
 	if dir == "" {
@@ -137,12 +152,11 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) download(w http.ResponseWriter, r *http.Request) {
-	client, conn, p, host, ok := h.connect(w, r)
+	client, p, host, cleanup, ok := h.connect(w, r)
 	if !ok {
 		return
 	}
-	defer conn.Close()
-	defer client.Close()
+	defer cleanup()
 
 	remote := r.URL.Query().Get("path")
 	if remote == "" {
@@ -174,12 +188,11 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request) {
 // downloadDir streams a remote directory as a tar archive (recursive). Files are
 // streamed one at a time so arbitrarily large trees never buffer in memory.
 func (h *handler) downloadDir(w http.ResponseWriter, r *http.Request) {
-	client, conn, p, host, ok := h.connect(w, r)
+	client, p, host, cleanup, ok := h.connect(w, r)
 	if !ok {
 		return
 	}
-	defer conn.Close()
-	defer client.Close()
+	defer cleanup()
 
 	root := r.URL.Query().Get("path")
 	if root == "" {
@@ -223,12 +236,11 @@ func (h *handler) downloadDir(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
-	client, conn, p, host, ok := h.connect(w, r)
+	client, p, host, cleanup, ok := h.connect(w, r)
 	if !ok {
 		return
 	}
-	defer conn.Close()
-	defer client.Close()
+	defer cleanup()
 
 	dir := r.URL.Query().Get("path")
 	name := r.URL.Query().Get("name")

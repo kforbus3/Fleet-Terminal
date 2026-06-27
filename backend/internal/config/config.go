@@ -38,6 +38,16 @@ type Config struct {
 	CookieSecure      bool
 	CSRFSecret        []byte
 
+	// Per-IP rate limiting (0 disables). General applies to the whole API; Auth
+	// is a stricter limit for the unauthenticated auth/bootstrap endpoints. Both
+	// key on the client IP, resolved via RealIP (trust X-Forwarded-For only when
+	// behind a reverse proxy that sets it — keep the app off the public internet
+	// directly).
+	RateLimitPerMin     int
+	RateLimitBurst      int
+	AuthRateLimitPerMin int
+	AuthRateLimitBurst  int
+
 	// WebAuthn / passkeys relying-party settings
 	WebAuthnRPID     string   // relying party id (registrable domain), e.g. "localhost"
 	WebAuthnRPName   string   // human-readable RP name
@@ -96,6 +106,10 @@ func Load() (*Config, error) {
 		SessionAbsoluteTTL: envDuration("FLEET_SESSION_ABSOLUTE_TTL", 12*time.Hour),
 		CookieDomain:       env("FLEET_COOKIE_DOMAIN", ""),
 		CookieSecure:       envBool("FLEET_COOKIE_SECURE", true),
+		RateLimitPerMin:     envInt("FLEET_RATE_LIMIT_PER_MIN", 600),
+		RateLimitBurst:      envInt("FLEET_RATE_LIMIT_BURST", 120),
+		AuthRateLimitPerMin: envInt("FLEET_AUTH_RATE_LIMIT_PER_MIN", 20),
+		AuthRateLimitBurst:  envInt("FLEET_AUTH_RATE_LIMIT_BURST", 10),
 		UserCertTTL:        envDuration("FLEET_USER_CERT_TTL", 7*24*time.Hour),
 		CertRenewBefore:    envDuration("FLEET_CERT_RENEW_BEFORE", 24*time.Hour),
 		HostCertTTL:        envDuration("FLEET_HOST_CERT_TTL", 365*24*time.Hour),

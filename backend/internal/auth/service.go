@@ -226,6 +226,32 @@ func (s *Service) DestroyUserSessions(ctx context.Context, userID uuid.UUID) {
 	}
 }
 
+// ReapStaleSessions ends sessions that have gone idle past SessionIdleTTL or
+// exceeded SessionAbsoluteTTL, applying the SAME bounds as loadPrincipal. Unlike
+// the lazy per-request check, this runs from a background loop so a live but
+// idle terminal/SFTP connection — which issues no further HTTP requests — is
+// still force-closed (via endSession → onSessionDestroyed → Live.Close) once it
+// goes idle. Returns the number of sessions ended.
+func (s *Service) ReapStaleSessions(ctx context.Context) int {
+	if s.cfg.SessionIdleTTL <= 0 && s.cfg.SessionAbsoluteTTL <= 0 {
+		return 0
+	}
+	stale, err := s.store.ListStaleSessions(ctx, s.cfg.SessionIdleTTL, s.cfg.SessionAbsoluteTTL)
+	if err != nil {
+		s.log.Warn("reap stale sessions: list", "err", err)
+		return 0
+	}
+	for _, sess := range stale {
+		if err := s.endSession(ctx, sess.ID); err != nil {
+			s.log.Warn("reap stale sessions: end", "session", sess.ID, "err", err)
+		}
+	}
+	if len(stale) > 0 {
+		s.log.Info("reaped stale sessions", "count", len(stale))
+	}
+	return len(stale)
+}
+
 // loadPrincipal builds a Principal from a validated session, resolving permissions.
 func (s *Service) loadPrincipal(ctx context.Context, claims *Claims) (*Principal, error) {
 	sess, err := s.store.GetSession(ctx, claims.SessionID)

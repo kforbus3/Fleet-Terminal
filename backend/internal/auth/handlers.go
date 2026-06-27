@@ -24,6 +24,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
 	r.Post("/auth/mfa/verify", h.mfaVerify) // login step 2 (uses challenge token)
+	// Forced MFA enrollment (gated by the login setup token, not a session).
+	r.Post("/auth/mfa/setup/begin", h.mfaSetupBegin)
+	r.Post("/auth/mfa/setup/confirm", h.mfaSetupConfirm)
 	r.Group(func(pr chi.Router) {
 		pr.Use(h.svc.RequireAuth)
 		pr.Post("/auth/logout", h.logout)
@@ -72,6 +75,102 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"mfaRequired": true, "challenge": challenge})
 		return
 	}
+	// No confirmed factor. If MFA is mandatory for this user (per-user flag or the
+	// global require_mfa setting), do NOT issue a session — return a setup token
+	// that authorizes one-time enrollment, which then completes login.
+	if h.svc.MFARequiredFor(r.Context(), u) {
+		setup, serr := h.svc.IssueMFASetupToken(u.ID)
+		if serr != nil {
+			writeError(w, http.StatusInternalServerError, "could not start mfa enrollment")
+			return
+		}
+		_ = h.svc.store.RecordAuthEvent(r.Context(), models.AuthEvent{
+			UserID: &u.ID, Username: u.Username, Event: "mfa_enrollment_required", IP: ip, UserAgent: ua,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"mfaEnrollmentRequired": true, "setupToken": setup})
+		return
+	}
+	h.completeLogin(w, r, u, ip, ua)
+}
+
+// mfaSetupBegin starts forced MFA enrollment for a user who must have a second
+// factor but has none. It is gated by the setup token from login (not a
+// session) and returns a fresh TOTP secret + otpauth URL to confirm.
+func (h *Handler) mfaSetupBegin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SetupToken string `json:"setupToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	userID, err := h.svc.ParseMFASetupToken(req.SetupToken)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "enrollment session expired; sign in again")
+		return
+	}
+	u, err := h.svc.store.GetUserByID(r.Context(), userID)
+	if err != nil || u.IsDisabled {
+		writeError(w, http.StatusUnauthorized, "account unavailable")
+		return
+	}
+	secret, url, err := GenerateTOTP("Fleet Terminal", u.Username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not generate secret")
+		return
+	}
+	enc, err := h.svc.EncryptSecret(secret)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not protect secret")
+		return
+	}
+	if _, err := h.svc.store.CreateTOTPPending(r.Context(), userID, "Authenticator app", enc); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not store method")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"secret": secret, "otpauthUrl": url})
+}
+
+// mfaSetupConfirm verifies the enrollment code, marks the factor confirmed, and
+// completes login (issuing a session). Gated by the login setup token.
+func (h *Handler) mfaSetupConfirm(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SetupToken string `json:"setupToken"`
+		Code       string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	userID, err := h.svc.ParseMFASetupToken(req.SetupToken)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "enrollment session expired; sign in again")
+		return
+	}
+	enc, id, err := h.svc.store.PendingTOTPSecret(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "no pending enrollment; start again")
+		return
+	}
+	secret, err := h.svc.DecryptSecret(enc)
+	if err != nil || !ValidateTOTP(secret, req.Code) {
+		writeError(w, http.StatusBadRequest, "invalid verification code")
+		return
+	}
+	if err := h.svc.store.ConfirmMFA(r.Context(), userID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not confirm")
+		return
+	}
+	u, err := h.svc.store.GetUserByID(r.Context(), userID)
+	if err != nil || u.IsDisabled {
+		writeError(w, http.StatusUnauthorized, "account unavailable")
+		return
+	}
+	ip, ua := clientMeta(r)
+	_, _ = h.svc.store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: &userID, ActorName: u.Username, Action: "auth.mfa_enroll", TargetKind: "user",
+		TargetID: userID.String(), Detail: map[string]any{"kind": "totp", "forced": true},
+	})
 	h.completeLogin(w, r, u, ip, ua)
 }
 

@@ -5,7 +5,7 @@ import {
 import TerminalIcon from "@mui/icons-material/Terminal";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
-import { bootstrapStatus } from "../api/auth";
+import { bootstrapStatus, mfaSetupBegin } from "../api/auth";
 import { webauthnSupported } from "../api/webauthn";
 
 // Credentials login form. On success the auth store holds the access token and
@@ -16,12 +16,16 @@ export function LoginPage() {
   const login = useAuthStore((s) => s.login);
   const verifyMfa = useAuthStore((s) => s.verifyMfa);
   const verifyPasskey = useAuthStore((s) => s.verifyPasskey);
+  const completeMfaSetup = useAuthStore((s) => s.completeMfaSetup);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [challenge, setChallenge] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  // Forced MFA enrollment state.
+  const [setupToken, setSetupToken] = useState<string | null>(null);
+  const [enroll, setEnroll] = useState<{ secret: string; otpauthUrl: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -40,6 +44,11 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
+      if (setupToken) {
+        await completeMfaSetup(setupToken, code);
+        navigate("/", { replace: true });
+        return;
+      }
       if (challenge) {
         await verifyMfa(challenge, code);
         navigate("/", { replace: true });
@@ -48,6 +57,12 @@ export function LoginPage() {
       const res = await login(username, password);
       if (res.mfaRequired && res.challenge) {
         setChallenge(res.challenge);
+      } else if (res.mfaEnrollmentRequired && res.setupToken) {
+        // MFA is mandatory but not enrolled: fetch a TOTP secret to set up now.
+        const token = res.setupToken;
+        const data = await mfaSetupBegin(token);
+        setSetupToken(token);
+        setEnroll(data);
       } else {
         navigate("/", { replace: true });
       }
@@ -57,6 +72,9 @@ export function LoginPage() {
       setSubmitting(false);
     }
   };
+
+  const enrolling = Boolean(setupToken);
+  const showCode = Boolean(challenge) || enrolling;
 
   return (
     <Box
@@ -77,12 +95,22 @@ export function LoginPage() {
             </Typography>
           </Stack>
           <Typography variant="h5" gutterBottom>
-            {challenge ? "Two-factor verification" : "Sign in"}
+            {enrolling ? "Set up two-factor" : challenge ? "Two-factor verification" : "Sign in"}
           </Typography>
           <Box component="form" onSubmit={onSubmit} sx={{ mt: 2 }}>
             <Stack spacing={2}>
               {error && <Alert severity="error">{error}</Alert>}
-              {challenge ? (
+              {enrolling && enroll && (
+                <Alert severity="info" sx={{ wordBreak: "break-all" }}>
+                  Two-factor authentication is required for your account. In your
+                  authenticator app, add an account using this secret key, then
+                  enter the 6-digit code below.
+                  <Box sx={{ mt: 1, fontFamily: "monospace", fontSize: 16, letterSpacing: 1 }}>
+                    {enroll.secret}
+                  </Box>
+                </Alert>
+              )}
+              {showCode ? (
                 <TextField
                   label="Authenticator code"
                   value={code}
@@ -119,9 +147,9 @@ export function LoginPage() {
                 size="large"
                 disabled={submitting}
               >
-                {submitting ? "Please wait…" : challenge ? "Verify" : "Sign in"}
+                {submitting ? "Please wait…" : enrolling ? "Confirm & sign in" : challenge ? "Verify" : "Sign in"}
               </Button>
-              {challenge && webauthnSupported() && (
+              {challenge && !enrolling && webauthnSupported() && (
                 <Button
                   variant="outlined"
                   onClick={async () => {

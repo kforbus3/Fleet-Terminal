@@ -19,6 +19,7 @@ type User struct {
 	IsDisabled    bool       `json:"isDisabled"`
 	EmailVerified bool       `json:"emailVerified"`
 	MustChangePw  bool       `json:"mustChangePassword"`
+	RequireMFA    bool       `json:"requireMfa"`
 	FailedLogins  int        `json:"-"`
 	LockedUntil   *time.Time `json:"lockedUntil,omitempty"`
 	LastLoginAt   *time.Time `json:"lastLoginAt,omitempty"`

@@ -49,15 +49,29 @@ type Result struct {
 // credentials. It is idempotent: re-running re-applies configuration.
 // EnrollParams controls how enrollment reaches the host for the initial bootstrap.
 type EnrollParams struct {
-	// Method is "password" to bootstrap a host that does not yet trust the Fleet
-	// CA (installs trust + WireGuard over an SSH password), or "trusted" to use
-	// the caller's session certificate on a host that already trusts the CA.
+	// Method selects how the bootstrap SSH connection authenticates:
+	//   "password" — an SSH password (host has no prior setup);
+	//   "key"      — an existing SSH private key already trusted in the host's
+	//                authorized_keys (for hosts with password auth disabled);
+	//   "agent"    — the operator's forwarded SSH agent (private key never leaves
+	//                their machine; only signatures cross the wire);
+	//   "trusted"  — the caller's session certificate (host already trusts the CA).
+	// All but "trusted" install the Fleet CA trust + login user; "trusted" assumes
+	// it is already present.
 	Method        string
 	BootstrapUser string
 	Password      string
+	// auth is an SSH auth method supplied programmatically (e.g. an agent-backed
+	// callback for the "agent" method). Not part of the JSON request.
+	auth ssh.AuthMethod
+	// PrivateKey is a PEM-encoded SSH private key used for the "key" method. It is
+	// held only in memory for the bootstrap connection and never persisted.
+	PrivateKey string
+	// KeyPassphrase decrypts PrivateKey when it is passphrase-protected.
+	KeyPassphrase string
 	// SudoPassword is the password for `sudo` when the bootstrap user has
 	// password-required sudo. If empty, the SSH password is reused (password
-	// method) or passwordless sudo is assumed (trusted method).
+	// method) or passwordless sudo is assumed (key/trusted methods).
 	SudoPassword string
 	// WGEndpoint overrides the jump host's WireGuard endpoint (host:port) written
 	// into the managed host's config — i.e. the publicly-routable address the host
@@ -69,10 +83,28 @@ type EnrollParams struct {
 }
 
 func (p EnrollParams) method() string {
-	if p.Method == "password" {
-		return "password"
+	switch p.Method {
+	case "password", "key", "agent":
+		return p.Method
+	default:
+		return "trusted"
 	}
-	return "trusted"
+}
+
+// bootstrapping reports whether the method must install the CA trust on the host
+// (true for password/key/agent; false for trusted, which assumes it already
+// exists).
+func (p EnrollParams) bootstrapping() bool {
+	return p.method() != "trusted"
+}
+
+// AgentParams builds enrollment params that authenticate the bootstrap SSH
+// connection with an operator's forwarded SSH agent.
+func AgentParams(auth ssh.AuthMethod, bootstrapUser, sudoPassword, wgEndpoint string, viaJump bool) EnrollParams {
+	return EnrollParams{
+		Method: "agent", auth: auth, BootstrapUser: bootstrapUser,
+		SudoPassword: sudoPassword, WGEndpoint: wgEndpoint, ViaJump: viaJump,
+	}
 }
 
 func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.Host, actor *uuid.UUID, params EnrollParams) (*Result, error) {
@@ -157,6 +189,59 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 			hostClose = func() { _ = hostClient.Close() }
 		}
 		step("connect_host", "ok", fmt.Sprintf("ssh password auth as %s@%s (%s)", buser, mgmtAddr, via))
+	} else if params.method() == "key" {
+		buser := params.BootstrapUser
+		if buser == "" {
+			buser = "root"
+		}
+		isRoot = buser == "root"
+		if !isRoot {
+			sudoPass = params.SudoPassword // no password to reuse; passwordless sudo otherwise
+		}
+		signer, kerr := parsePrivateKey(params.PrivateKey, params.KeyPassphrase)
+		if kerr != nil {
+			return fail("connect_host", kerr)
+		}
+		if params.ViaJump {
+			conn, derr := s.gw.DialKeyViaJump(ctx, sessionID.String(), mgmtAddr, host.SSHPort, buser, signer)
+			if derr != nil {
+				return fail("connect_host", derr)
+			}
+			hostClient, hostClose = conn.Client, conn.Close
+		} else {
+			hostClient, err = s.gw.DialDirectKey(ctx, mgmtAddr, host.SSHPort, buser, signer)
+			if err != nil {
+				return fail("connect_host", err)
+			}
+			hostClose = func() { _ = hostClient.Close() }
+		}
+		step("connect_host", "ok", fmt.Sprintf("ssh key auth as %s@%s (%s)", buser, mgmtAddr, via))
+	} else if params.method() == "agent" {
+		buser := params.BootstrapUser
+		if buser == "" {
+			buser = "root"
+		}
+		isRoot = buser == "root"
+		if !isRoot {
+			sudoPass = params.SudoPassword // no password to reuse; passwordless sudo otherwise
+		}
+		if params.auth == nil {
+			return fail("connect_host", fmt.Errorf("no forwarded agent available"))
+		}
+		if params.ViaJump {
+			conn, derr := s.gw.DialAuthViaJump(ctx, sessionID.String(), mgmtAddr, host.SSHPort, buser, params.auth)
+			if derr != nil {
+				return fail("connect_host", derr)
+			}
+			hostClient, hostClose = conn.Client, conn.Close
+		} else {
+			hostClient, err = s.gw.DialDirectAuth(ctx, mgmtAddr, host.SSHPort, buser, params.auth)
+			if err != nil {
+				return fail("connect_host", err)
+			}
+			hostClose = func() { _ = hostClient.Close() }
+		}
+		step("connect_host", "ok", fmt.Sprintf("ssh agent auth as %s@%s (%s)", buser, mgmtAddr, via))
 	} else {
 		// Certificate auth has no SSH password, but sudo may still require one.
 		sudoPass = params.SudoPassword
@@ -191,9 +276,9 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		step("collect_facts", "skipped", ferr.Error())
 	}
 
-	// 4) For a password bootstrap, install the SSH CA trust, the login user, and
-	//    sshd configuration so subsequent per-user certificate logins work.
-	if params.method() == "password" {
+	// 4) For a password/key bootstrap, install the SSH CA trust, the login user,
+	//    and sshd configuration so subsequent per-user certificate logins work.
+	if params.bootstrapping() {
 		caKeys, kerr := s.store.ListActiveCAPublicKeys(ctx, "user")
 		if kerr != nil || len(caKeys) == 0 {
 			return fail("install_trust", orErr(kerr, "no active user CA"))
@@ -649,4 +734,28 @@ func orErr(err error, msg string) error {
 		return fmt.Errorf("%v: %s", err, oneLine(msg))
 	}
 	return fmt.Errorf("%s", oneLine(msg))
+}
+
+// parsePrivateKey builds an SSH signer from a PEM-encoded private key, decrypting
+// it with the passphrase when supplied. The key bytes stay in memory only.
+func parsePrivateKey(pem, passphrase string) (ssh.Signer, error) {
+	if strings.TrimSpace(pem) == "" {
+		return nil, fmt.Errorf("no private key provided")
+	}
+	if passphrase != "" {
+		signer, err := ssh.ParsePrivateKeyWithPassphrase([]byte(pem), []byte(passphrase))
+		if err != nil {
+			return nil, fmt.Errorf("decrypt private key: %w", err)
+		}
+		return signer, nil
+	}
+	signer, err := ssh.ParsePrivateKey([]byte(pem))
+	if err != nil {
+		// A clearer hint when the key is actually passphrase-protected.
+		if _, ok := err.(*ssh.PassphraseMissingError); ok {
+			return nil, fmt.Errorf("private key is passphrase-protected; provide the passphrase")
+		}
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+	return signer, nil
 }

@@ -10,10 +10,15 @@ interface AuthState {
   accessToken: string | null;
   isSuperAdmin: boolean;
   loaded: boolean;
-  // login returns {mfaRequired:true, challenge} when a second factor is needed;
-  // otherwise the session is established.
-  login: (username: string, password: string) => Promise<{ mfaRequired?: boolean; challenge?: string }>;
+  // login returns {mfaRequired, challenge} when a second factor is needed, or
+  // {mfaEnrollmentRequired, setupToken} when MFA is mandatory but not yet
+  // enrolled; otherwise the session is established.
+  login: (username: string, password: string) => Promise<{
+    mfaRequired?: boolean; challenge?: string;
+    mfaEnrollmentRequired?: boolean; setupToken?: string;
+  }>;
   verifyMfa: (challenge: string, code: string) => Promise<void>;
+  completeMfaSetup: (setupToken: string, code: string) => Promise<void>;
   verifyPasskey: (challenge: string) => Promise<void>;
   logout: () => Promise<void>;
   loadMe: () => Promise<void>;
@@ -38,6 +43,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     if (res.mfaRequired) {
       return { mfaRequired: true, challenge: res.challenge };
     }
+    if (res.mfaEnrollmentRequired) {
+      return { mfaEnrollmentRequired: true, setupToken: res.setupToken };
+    }
     setAccessToken(res.accessToken ?? null);
     set({ user: res.user ?? null, accessToken: res.accessToken ?? null });
     await get().loadMe();
@@ -46,6 +54,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   verifyMfa: async (challenge, code) => {
     const res = await authApi.mfaVerify(challenge, code);
+    setAccessToken(res.accessToken ?? null);
+    set({ user: res.user ?? null, accessToken: res.accessToken ?? null });
+    await get().loadMe();
+  },
+
+  completeMfaSetup: async (setupToken, code) => {
+    const res = await authApi.mfaSetupConfirm(setupToken, code);
     setAccessToken(res.accessToken ?? null);
     set({ user: res.user ?? null, accessToken: res.accessToken ?? null });
     await get().loadMe();

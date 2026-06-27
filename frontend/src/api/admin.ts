@@ -12,6 +12,7 @@ export interface User {
   isDisabled: boolean;
   emailVerified: boolean;
   mustChangePassword: boolean;
+  requireMfa: boolean;
   lockedUntil?: string;
   lastLoginAt?: string;
   createdAt: string;
@@ -82,6 +83,24 @@ export async function unlockUser(id: string): Promise<void> {
   await api.post(`/api/v1/users/${id}/unlock`);
 }
 
+export async function setUserRequireMFA(id: string, require: boolean): Promise<void> {
+  await api.post(`/api/v1/users/${id}/require-mfa`, { require });
+}
+
+// Global "require MFA for all users" toggle, stored as a system setting.
+export async function getGlobalRequireMFA(): Promise<boolean> {
+  try {
+    const { data } = await api.get<{ value?: { enabled?: boolean } }>("/api/v1/settings/require_mfa");
+    return !!data?.value?.enabled;
+  } catch {
+    return false; // 404 when unset = MFA optional
+  }
+}
+
+export async function setGlobalRequireMFA(enabled: boolean): Promise<void> {
+  await api.put("/api/v1/settings/require_mfa", { enabled });
+}
+
 export async function resetUserPassword(id: string, newPassword: string, mustChangePassword: boolean): Promise<void> {
   await api.post(`/api/v1/users/${id}/reset-password`, { newPassword, mustChangePassword });
 }
@@ -105,6 +124,17 @@ export interface AuthEvent {
 export async function userLoginHistory(id: string): Promise<AuthEvent[]> {
   const { data } = await api.get<{ events: AuthEvent[] }>(`/api/v1/users/${id}/login-history`);
   return data.events ?? [];
+}
+
+export interface UserHostsResponse {
+  hosts: { id: string; hostname: string; environment: string; address?: string }[];
+  isSuperAdmin: boolean;
+}
+
+// userHosts returns the hosts a user can currently reach (the at-a-glance view).
+export async function userHosts(id: string): Promise<UserHostsResponse> {
+  const { data } = await api.get<UserHostsResponse>(`/api/v1/users/${id}/hosts`);
+  return { hosts: data.hosts ?? [], isSuperAdmin: !!data.isSuperAdmin };
 }
 
 export async function listRoles(): Promise<Role[]> {

@@ -9,11 +9,13 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
+import DnsIcon from "@mui/icons-material/Dns";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createUser, deleteUser, listUsers, resetUserMFA, resetUserPassword,
-  setUserDisabled, terminateUserSessions, unlockUser, updateUser,
-  userLoginHistory, type AuthEvent, type CreateUserInput, type User,
+  createUser, deleteUser, getGlobalRequireMFA, listUsers, resetUserMFA, resetUserPassword,
+  setGlobalRequireMFA, setUserDisabled, setUserRequireMFA, terminateUserSessions,
+  unlockUser, updateUser, userHosts, userLoginHistory,
+  type AuthEvent, type CreateUserInput, type User, type UserHostsResponse,
 } from "../api/admin";
 
 const EMPTY_CREATE: CreateUserInput = {
@@ -34,6 +36,13 @@ export function UsersPage() {
   const [menuUser, setMenuUser] = useState<User | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
   const [history, setHistory] = useState<{ user: User; events: AuthEvent[] } | null>(null);
+  const [hostsView, setHostsView] = useState<{ user: User; data: UserHostsResponse } | null>(null);
+
+  const { data: globalMfa = false } = useQuery({ queryKey: ["global-require-mfa"], queryFn: getGlobalRequireMFA });
+  const globalMfaMut = useMutation({
+    mutationFn: (enabled: boolean) => setGlobalRequireMFA(enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["global-require-mfa"] }),
+  });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["users"] });
 
@@ -59,8 +68,10 @@ export function UsersPage() {
     onSuccess: () => { setCreateOpen(false); setForm(EMPTY_CREATE); invalidate(); },
   });
   const updateMut = useMutation({
-    mutationFn: (u: User) =>
-      updateUser(u.id, { email: u.email ?? "", displayName: u.displayName, isDisabled: u.isDisabled }),
+    mutationFn: async (u: User) => {
+      await updateUser(u.id, { email: u.email ?? "", displayName: u.displayName, isDisabled: u.isDisabled });
+      await setUserRequireMFA(u.id, u.requireMfa);
+    },
     onSuccess: () => { setEditing(null); invalidate(); },
   });
   const deleteMut = useMutation({
@@ -70,8 +81,15 @@ export function UsersPage() {
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" sx={{ mb: 2 }}>
+      <Stack direction="row" alignItems="center" sx={{ mb: 2 }} spacing={2}>
         <Typography variant="h5" sx={{ flexGrow: 1 }}>User Management</Typography>
+        <Tooltip title="When on, every user must enroll a second factor before a session is issued.">
+          <FormControlLabel
+            control={<Switch checked={globalMfa} disabled={globalMfaMut.isPending}
+              onChange={(e) => globalMfaMut.mutate(e.target.checked)} />}
+            label="Require MFA for all"
+          />
+        </Tooltip>
         <Button startIcon={<AddIcon />} variant="contained" onClick={() => setCreateOpen(true)}>
           New User
         </Button>
@@ -104,8 +122,17 @@ export function UsersPage() {
                     color={u.isDisabled ? "default" : "success"}
                     size="small"
                   />
+                  {(u.requireMfa || globalMfa) && (
+                    <Chip label="MFA" size="small" color="primary" variant="outlined" sx={{ ml: 1 }} />
+                  )}
                 </TableCell>
                 <TableCell align="right">
+                  <Tooltip title="View accessible hosts">
+                    <IconButton size="small" onClick={async () => {
+                      try { setHostsView({ user: u, data: await userHosts(u.id) }); }
+                      catch { setSnack("Failed to load hosts"); }
+                    }}><DnsIcon fontSize="small" /></IconButton>
+                  </Tooltip>
                   <Tooltip title="Edit">
                     <IconButton size="small" onClick={() => setEditing(u)}><EditIcon fontSize="small" /></IconButton>
                   </Tooltip>
@@ -172,6 +199,10 @@ export function UsersPage() {
                 <Switch checked={editing.isDisabled}
                   onChange={(e) => setEditing({ ...editing, isDisabled: e.target.checked })} />
               } label="Disabled" />
+              <FormControlLabel control={
+                <Switch checked={editing.requireMfa}
+                  onChange={(e) => setEditing({ ...editing, requireMfa: e.target.checked })} />
+              } label="Require MFA (force enrollment at next sign-in)" />
             </Stack>
           )}
         </DialogContent>
@@ -225,6 +256,34 @@ export function UsersPage() {
           </List>
         </DialogContent>
         <DialogActions><Button onClick={() => setHistory(null)}>Close</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(hostsView)} onClose={() => setHostsView(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Accessible hosts — {hostsView?.user.username}</DialogTitle>
+        <DialogContent dividers>
+          {hostsView?.data.isSuperAdmin && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Super admin — has access to all hosts.
+            </Alert>
+          )}
+          <List dense>
+            {(hostsView?.data.hosts ?? []).map((h) => (
+              <ListItem key={h.id} disableGutters>
+                <ListItemText
+                  primary={h.hostname}
+                  secondary={[h.environment, h.address].filter(Boolean).join("  ·  ")}
+                />
+              </ListItem>
+            ))}
+            {hostsView && hostsView.data.hosts.length === 0 && (
+              <ListItem><ListItemText
+                primary="No accessible hosts"
+                secondary="Grant access via a group or directly from a host's Manage access dialog."
+              /></ListItem>
+            )}
+          </List>
+        </DialogContent>
+        <DialogActions><Button onClick={() => setHostsView(null)}>Close</Button></DialogActions>
       </Dialog>
 
       <Snackbar

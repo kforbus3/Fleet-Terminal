@@ -36,12 +36,38 @@ func NewIssuer(st *store.Store, c *ca.CA, cfg *config.Config, log *slog.Logger, 
 // Vault exposes the live credential store.
 func (i *Issuer) Vault() *Vault { return i.vault }
 
-// Issue generates a new Ed25519 keypair in memory, signs a user certificate, and
-// records its metadata. The private key is retained only in the Vault.
+// Issue generates the session-level ephemeral identity (used for the jump host,
+// enrollment and system operations). The private key is retained only in the
+// Vault. Per-host connection certificates are minted by IssueForHost.
 func (i *Issuer) Issue(ctx context.Context, sessionID, userID uuid.UUID, username string, principals []string) (*Credential, error) {
 	if len(principals) == 0 {
 		principals = []string{username}
 	}
+	keyID := fmt.Sprintf("%s/%s", username, sessionID.String()[:8])
+	return i.issue(ctx, sessionID, sessionScope, userID, username, principals, keyID, "")
+}
+
+// IssueForHost mints a UNIQUE per-host certificate for a session: a fresh
+// keypair and serial scoped to one managed host, so every (user, host) pair
+// authenticates with distinct key material and an independently revocable cert.
+// The host id is embedded in the certificate's key id and recorded against the
+// certificate row for audit.
+func (i *Issuer) IssueForHost(ctx context.Context, sessionID, userID, hostID uuid.UUID, username, hostname string, principals []string) (*Credential, error) {
+	if len(principals) == 0 {
+		principals = dedupePrincipals([]string{"fleet", username})
+	}
+	label := hostname
+	if label == "" {
+		label = hostID.String()[:8]
+	}
+	keyID := fmt.Sprintf("%s/host:%s", username, label)
+	return i.issue(ctx, sessionID, hostID, userID, username, principals, keyID, hostname)
+}
+
+// issue mints a keypair, signs a user certificate with the given key id, records
+// metadata (binding it to hostID when non-nil) and stores the live key in the
+// vault under (sessionID, hostID).
+func (i *Issuer) issue(ctx context.Context, sessionID, hostID, userID uuid.UUID, username string, principals []string, keyID, _hostname string) (*Credential, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
@@ -55,9 +81,9 @@ func (i *Issuer) Issue(ctx context.Context, sessionID, userID uuid.UUID, usernam
 		return nil, err
 	}
 	auditID := uuid.New()
-	keyID := fmt.Sprintf("%s/%s/%d", username, sessionID.String()[:8], serial)
+	fullKeyID := fmt.Sprintf("%s/%d", keyID, serial)
 
-	cert, err := i.ca.SignUserCertificate(sshPub, keyID, principals, serial, i.cfg.UserCertTTL)
+	cert, err := i.ca.SignUserCertificate(sshPub, fullKeyID, principals, serial, i.cfg.UserCertTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -72,28 +98,65 @@ func (i *Issuer) Issue(ctx context.Context, sessionID, userID uuid.UUID, usernam
 
 	caID, _ := uuid.Parse(i.ca.ActiveID())
 	expiresAt := time.Unix(int64(cert.ValidBefore), 0)
-	if _, err := i.store.InsertCertificate(ctx, store.InsertCertificateParams{
+	params := store.InsertCertificateParams{
 		Serial: serial, Kind: "user", CAKeyID: caID, UserID: &userID, SessionID: &sessionID,
-		KeyID: keyID, Principals: principals,
+		KeyID: fullKeyID, Principals: principals,
 		PublicKey: string(ssh.MarshalAuthorizedKey(sshPub)), AuditID: auditID, ExpiresAt: expiresAt,
-	}); err != nil {
+	}
+	if hostID != sessionScope {
+		hid := hostID
+		params.HostID = &hid
+	}
+	if _, err := i.store.InsertCertificate(ctx, params); err != nil {
 		return nil, err
 	}
 
 	cred := &Credential{
-		SessionID: sessionID, UserID: userID, Username: username, Serial: serial,
+		SessionID: sessionID, HostID: hostID, UserID: userID, Username: username, Serial: serial,
 		Principals: principals, ExpiresAt: expiresAt,
 		privateKey: priv, cert: cert, certSigner: certSigner,
 	}
 	i.vault.put(cred)
 	metrics.CertificatesIssued.WithLabelValues("user").Inc()
 
+	detail := map[string]any{"principals": principals, "expiresAt": expiresAt, "auditId": auditID}
+	if hostID != sessionScope {
+		detail["hostId"] = hostID
+	}
 	_, _ = i.store.AppendAudit(ctx, models.AuditEvent{
 		ActorID: &userID, ActorName: username, Action: "certificate.issue",
 		TargetKind: "certificate", TargetID: fmt.Sprintf("%d", serial),
-		Detail: map[string]any{"principals": principals, "expiresAt": expiresAt, "auditId": auditID},
+		Detail: detail,
 	})
 	return cred, nil
+}
+
+// EnsureHostCredential guarantees the session holds a live, unexpired per-host
+// certificate for hostID, minting one if absent or close to expiry. Returns the
+// certificate serial in use. This is called by the gateway just before dialing.
+func (i *Issuer) EnsureHostCredential(ctx context.Context, sessionID, userID, hostID uuid.UUID, username, hostname string) (uint64, error) {
+	if c, ok := i.vault.GetHost(sessionID, hostID); ok && time.Until(c.ExpiresAt) > i.cfg.CertRenewBefore {
+		return c.Serial, nil
+	}
+	cred, err := i.IssueForHost(ctx, sessionID, userID, hostID, username, hostname, nil)
+	if err != nil {
+		return 0, err
+	}
+	return cred.Serial, nil
+}
+
+// dedupePrincipals removes empty/duplicate principals, preserving order.
+func dedupePrincipals(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range in {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
 
 // IssueForSession implements app.CAIssuer.

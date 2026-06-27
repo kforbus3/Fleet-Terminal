@@ -32,6 +32,9 @@ func Mount(r chi.Router, d *app.Deps) {
 		pr.With(d.Auth.RequirePermission("Host.Delete")).Delete("/hosts/{id}", h.del)
 		pr.With(d.Auth.RequirePermission("Host.Edit")).Post("/hosts/{id}/groups/{groupId}", h.addGroup)
 		pr.With(d.Auth.RequirePermission("Host.Edit")).Delete("/hosts/{id}/groups/{groupId}", h.removeGroup)
+		pr.With(d.Auth.RequirePermission("Host.Edit")).Get("/hosts/{id}/access", h.access)
+		pr.With(d.Auth.RequirePermission("Host.Edit")).Post("/hosts/{id}/users/{userId}", h.addUser)
+		pr.With(d.Auth.RequirePermission("Host.Edit")).Delete("/hosts/{id}/users/{userId}", h.removeUser)
 	})
 }
 
@@ -196,6 +199,60 @@ func (h *handler) removeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "host.group_remove", hostID.String(), map[string]any{"groupId": groupID.String()})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// access returns who can reach a host: the groups it belongs to and the users
+// granted direct access. Used by the host access-management UI.
+func (h *handler) access(w http.ResponseWriter, r *http.Request) {
+	hostID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	host, err := h.d.Store.GetHost(r.Context(), hostID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	users, err := h.d.Store.HostDirectUsers(r.Context(), hostID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load access")
+		return
+	}
+	if users == nil {
+		users = []models.User{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": host.Groups, "users": users})
+}
+
+func (h *handler) addUser(w http.ResponseWriter, r *http.Request) {
+	hostID, err1 := uuid.Parse(chi.URLParam(r, "id"))
+	userID, err2 := uuid.Parse(chi.URLParam(r, "userId"))
+	if err1 != nil || err2 != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.d.Store.AddUserToHost(r.Context(), hostID, userID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not grant access")
+		return
+	}
+	h.audit(r, "host.user_add", hostID.String(), map[string]any{"userId": userID.String()})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "added"})
+}
+
+func (h *handler) removeUser(w http.ResponseWriter, r *http.Request) {
+	hostID, err1 := uuid.Parse(chi.URLParam(r, "id"))
+	userID, err2 := uuid.Parse(chi.URLParam(r, "userId"))
+	if err1 != nil || err2 != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.d.Store.RemoveUserFromHost(r.Context(), hostID, userID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not revoke access")
+		return
+	}
+	h.audit(r, "host.user_remove", hostID.String(), map[string]any{"userId": userID.String()})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
