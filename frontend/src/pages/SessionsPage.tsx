@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Box, Chip, Drawer, IconButton, Paper, Stack, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Typography, Divider, CircularProgress,
+  Box, Button, Chip, Drawer, IconButton, Paper, Stack, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, TextField, Tooltip, Typography, Divider, CircularProgress,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import DownloadIcon from "@mui/icons-material/Download";
+import DeleteIcon from "@mui/icons-material/Delete";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { useQuery } from "@tanstack/react-query";
-import { getRecording, listSessions, type SSHSession } from "../api/sessions";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  deleteRecording, downloadRecording, getRecording, listSessions, pruneRecordings,
+  recordingStats, type SSHSession,
+} from "../api/sessions";
+import { useAuthStore } from "../store/auth";
 
 // One parsed asciicast v2 output frame: absolute time offset (seconds) + bytes.
 interface CastFrame {
@@ -102,12 +108,55 @@ function ReplayTerminal({ sessionId }: { sessionId: string }) {
 // streams the asciicast recording back through an xterm.js terminal, honoring
 // the original frame timing.
 export function SessionsPage() {
+  const qc = useQueryClient();
   const { data: sessions = [], isLoading } = useQuery({ queryKey: ["sessions"], queryFn: listSessions });
+  const { data: stats } = useQuery({ queryKey: ["recording-stats"], queryFn: recordingStats });
   const [active, setActive] = useState<SSHSession | null>(null);
+  const [pruneDays, setPruneDays] = useState("30");
+  const canManage = useAuthStore((s) => s.has("System.Configure"));
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["sessions"] });
+    void qc.invalidateQueries({ queryKey: ["recording-stats"] });
+  };
+  const delMut = useMutation({ mutationFn: deleteRecording, onSuccess: invalidate });
+  const pruneMut = useMutation({
+    mutationFn: () => pruneRecordings(Number(pruneDays) || 30),
+    onSuccess: invalidate,
+  });
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 2 }}>Session Replay</Typography>
+      <Stack direction="row" alignItems="center" sx={{ mb: 2 }} spacing={2}>
+        <Typography variant="h5" sx={{ flexGrow: 1 }}>Session Replay</Typography>
+        {stats && (
+          <Typography variant="body2" color="text.secondary">
+            {stats.count} recordings · {formatBytes(stats.bytes)}
+          </Typography>
+        )}
+        {canManage && (
+          <Stack direction="row" spacing={1} alignItems="center">
+            <TextField
+              size="small" label="Delete older than (days)" type="number" value={pruneDays}
+              onChange={(e) => setPruneDays(e.target.value)} sx={{ width: 180 }}
+            />
+            <Button
+              variant="outlined" color="warning" size="medium"
+              disabled={pruneMut.isPending || !(Number(pruneDays) > 0)}
+              onClick={() => {
+                if (window.confirm(`Permanently delete recordings older than ${pruneDays} days?`)) pruneMut.mutate();
+              }}
+            >
+              {pruneMut.isPending ? "Pruning…" : "Prune"}
+            </Button>
+          </Stack>
+        )}
+      </Stack>
+      {pruneMut.isSuccess && (
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
+          Pruned {pruneMut.data.deleted} recordings, reclaimed {formatBytes(pruneMut.data.bytesReclaimed)}.
+        </Typography>
+      )}
 
       <TableContainer component={Paper} variant="outlined">
         <Table size="small">
@@ -119,6 +168,7 @@ export function SessionsPage() {
               <TableCell>Status</TableCell>
               <TableCell>Bytes (in/out)</TableCell>
               <TableCell>Client IP</TableCell>
+              <TableCell align="right">Recording</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -130,10 +180,27 @@ export function SessionsPage() {
                 <TableCell><Chip label={s.status} size="small" /></TableCell>
                 <TableCell>{s.bytesIn} / {s.bytesOut}</TableCell>
                 <TableCell>{s.clientIp}</TableCell>
+                <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                  <Tooltip title="Export recording (.cast)">
+                    <IconButton size="small" onClick={() => void downloadRecording(s.id)}>
+                      <DownloadIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  {canManage && (
+                    <Tooltip title="Delete recording">
+                      <IconButton
+                        size="small" color="error"
+                        onClick={() => { if (window.confirm("Delete this recording?")) delMut.mutate(s.id); }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {!isLoading && sessions.length === 0 && (
-              <TableRow><TableCell colSpan={6}>
+              <TableRow><TableCell colSpan={7}>
                 <Typography color="text.secondary">No recorded sessions.</Typography>
               </TableCell></TableRow>
             )}
@@ -173,4 +240,13 @@ export function SessionsPage() {
       </Drawer>
     </Box>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(1)} ${units[i]}`;
 }

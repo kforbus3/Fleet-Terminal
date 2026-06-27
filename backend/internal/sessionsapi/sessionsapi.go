@@ -5,15 +5,18 @@ package sessionsapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/fleet-terminal/backend/internal/app"
+	"github.com/fleet-terminal/backend/internal/auth"
 	"github.com/fleet-terminal/backend/internal/models"
 	"github.com/fleet-terminal/backend/internal/store"
 )
@@ -27,7 +30,19 @@ func Mount(r chi.Router, d *app.Deps) {
 		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions", h.list)
 		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions/{id}", h.get)
 		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions/{id}/recording", h.recording)
+		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/sessions/{id}/recording/download", h.downloadRecording)
+		// Deleting/pruning recordings is a retention/admin action.
+		pr.With(d.Auth.RequirePermission("System.Configure")).Delete("/sessions/{id}/recording", h.deleteRecording)
+		pr.With(d.Auth.RequirePermission("System.Configure")).Post("/recordings/prune", h.prune)
+		pr.With(d.Auth.RequirePermission("Session.Replay")).Get("/recordings/stats", h.stats)
 	})
+}
+
+func (h *handler) resolvePath(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(h.d.Cfg.RecordingDir, p)
 }
 
 type handler struct{ d *app.Deps }
@@ -100,6 +115,84 @@ func (h *handler) recording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"recording": rec, "cast": string(cast)})
+}
+
+// downloadRecording streams the asciicast file as a download (export).
+func (h *handler) downloadRecording(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	rec, err := h.d.Store.GetRecordingBySession(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "recording not found")
+		return
+	}
+	f, err := os.Open(h.resolvePath(rec.Path))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "recording file not found")
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/x-asciicast")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"session-"+id.String()+".cast\"")
+	_, _ = io.Copy(w, f)
+}
+
+// deleteRecording removes a session's recording (DB row + file).
+func (h *handler) deleteRecording(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+	path, err := h.d.Store.DeleteRecordingBySession(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "recording not found")
+		return
+	}
+	_ = os.Remove(h.resolvePath(path))
+	_, _ = h.d.Store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: &p.UserID, ActorName: p.Username, Action: "recording.delete",
+		TargetKind: "session", TargetID: id.String(),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// prune deletes recordings older than the given number of days (retention).
+func (h *handler) prune(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r)
+	days, _ := strconv.Atoi(r.URL.Query().Get("olderThanDays"))
+	if days <= 0 {
+		writeError(w, http.StatusBadRequest, "olderThanDays must be > 0")
+		return
+	}
+	before := time.Now().AddDate(0, 0, -days)
+	paths, bytes, err := h.d.Store.PruneRecordingsBefore(r.Context(), before)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "prune failed")
+		return
+	}
+	for _, path := range paths {
+		_ = os.Remove(h.resolvePath(path))
+	}
+	_, _ = h.d.Store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: &p.UserID, ActorName: p.Username, Action: "recording.prune",
+		Detail: map[string]any{"olderThanDays": days, "deleted": len(paths), "bytesReclaimed": bytes},
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": len(paths), "bytesReclaimed": bytes})
+}
+
+// stats reports recording count and total storage.
+func (h *handler) stats(w http.ResponseWriter, r *http.Request) {
+	count, total, err := h.d.Store.RecordingsStorageBytes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "stats failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": count, "bytes": total})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

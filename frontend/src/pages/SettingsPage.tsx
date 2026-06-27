@@ -49,6 +49,7 @@ export function SettingsPage() {
       <Typography variant="h5" sx={{ mb: 2 }}>System Settings</Typography>
 
       <WGSettingsCard current={settings["wireguard"]} />
+      <RetentionCard current={settings["recordings"]} />
       <BackupCard />
 
       <TableContainer component={Paper} variant="outlined">
@@ -136,6 +137,38 @@ function WGSettingsCard({ current }: { current: unknown }) {
           sx={{ width: 120 }}
         />
         <Button variant="contained" sx={{ mt: 1 }} disabled={save.isPending || !jumpHost.trim()} onClick={() => save.mutate()}>
+          {saved ? "Saved" : "Save"}
+        </Button>
+      </Stack>
+    </Paper>
+  );
+}
+
+// RetentionCard configures automatic deletion of old session recordings to
+// reclaim disk. A background job prunes recordings older than the set days.
+function RetentionCard({ current }: { current: unknown }) {
+  const qc = useQueryClient();
+  const cur = (current ?? {}) as { retentionDays?: number };
+  const [days, setDays] = useState(String(cur.retentionDays ?? 0));
+  const [saved, setSaved] = useState(false);
+  const save = useMutation({
+    mutationFn: () => setSetting("recordings", { retentionDays: Number(days) || 0 }),
+    onSuccess: () => { setSaved(true); void qc.invalidateQueries({ queryKey: ["settings"] }); },
+  });
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+      <Typography variant="h6">Session recording retention</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+        Automatically delete session recordings older than this many days to reclaim disk space.
+        Set 0 to keep recordings indefinitely. Pruning runs in the background.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="flex-start">
+        <TextField
+          label="Retention (days)" type="number" value={days}
+          onChange={(e) => { setDays(e.target.value); setSaved(false); }}
+          helperText="0 = keep forever" sx={{ width: 200 }}
+        />
+        <Button variant="contained" sx={{ mt: 1 }} disabled={save.isPending} onClick={() => save.mutate()}>
           {saved ? "Saved" : "Save"}
         </Button>
       </Stack>

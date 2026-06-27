@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -116,8 +118,47 @@ func (s *Server) InitBackground(ctx context.Context) error {
 	}
 	go s.renewalLoop(ctx)
 	go s.reaperLoop(ctx)
+	go s.retentionLoop(ctx)
 	go monitor.New(s.Store, s.Cfg, s.Log, s.Gateway, s.Issuer, s.Hub, s.Jobs).Run(ctx)
 	return nil
+}
+
+// retentionLoop prunes session recordings older than the configured retention
+// (settings key "recordings".retentionDays; 0 = keep forever), reclaiming disk.
+func (s *Server) retentionLoop(ctx context.Context) {
+	t := time.NewTicker(6 * time.Hour)
+	defer t.Stop()
+	prune := func() {
+		days := s.Store.RecordingRetentionDays(ctx)
+		if days <= 0 {
+			s.Jobs.Record("recording-retention", nil)
+			return
+		}
+		paths, bytes, err := s.Store.PruneRecordingsBefore(ctx, time.Now().AddDate(0, 0, -days))
+		if err != nil {
+			s.Jobs.Record("recording-retention", err)
+			return
+		}
+		for _, p := range paths {
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(s.Cfg.RecordingDir, p)
+			}
+			_ = os.Remove(p)
+		}
+		if len(paths) > 0 {
+			s.Log.Info("pruned recordings", "count", len(paths), "bytes", bytes, "retentionDays", days)
+		}
+		s.Jobs.Record("recording-retention", nil)
+	}
+	prune() // run once on startup
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			prune()
+		}
+	}
 }
 
 // reaperLoop periodically expires elapsed just-in-time access grants.

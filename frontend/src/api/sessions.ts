@@ -44,3 +44,37 @@ export async function getRecording(id: string): Promise<RecordingPayload> {
   const { data } = await api.get<RecordingPayload>(`/api/v1/sessions/${id}/recording`);
   return data;
 }
+
+// downloadRecording exports the asciicast (.cast) file for a session.
+export async function downloadRecording(id: string): Promise<void> {
+  const res = await api.get(`/api/v1/sessions/${id}/recording/download`, { responseType: "blob" });
+  const url = URL.createObjectURL(res.data as Blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `session-${id}.cast`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function deleteRecording(id: string): Promise<void> {
+  await api.delete(`/api/v1/sessions/${id}/recording`);
+}
+
+export interface RecordingStats {
+  count: number;
+  bytes: number;
+}
+
+export async function recordingStats(): Promise<RecordingStats> {
+  const { data } = await api.get<RecordingStats>("/api/v1/recordings/stats");
+  return data;
+}
+
+export async function pruneRecordings(olderThanDays: number): Promise<{ deleted: number; bytesReclaimed: number }> {
+  const { data } = await api.post<{ deleted: number; bytesReclaimed: number }>(
+    `/api/v1/recordings/prune?olderThanDays=${olderThanDays}`,
+  );
+  return data;
+}
