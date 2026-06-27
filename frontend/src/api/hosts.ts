@@ -85,6 +85,18 @@ export async function deleteHost(id: string): Promise<void> {
   await api.delete(`/api/v1/hosts/${id}`);
 }
 
+export interface NextWG {
+  nextWgAddress: string;
+  subnet: string;
+  exhausted?: boolean;
+}
+
+// nextWGAddress returns what auto-assignment would pick from the overlay pool.
+export async function nextWGAddress(): Promise<NextWG> {
+  const { data } = await api.get<NextWG>("/api/v1/hosts/wg/next");
+  return data;
+}
+
 export type HostStatusStats = Record<string, number>;
 
 export async function getHostStatusStats(): Promise<HostStatusStats> {

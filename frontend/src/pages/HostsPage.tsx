@@ -14,7 +14,7 @@ import CableIcon from "@mui/icons-material/Cable";
 import { Alert, CircularProgress, List, ListItem, ListItemText } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createHost, deleteHost, enrollHost, listHosts,
+  createHost, deleteHost, enrollHost, listHosts, nextWGAddress,
   type EnrollmentResult, type Host, type HostInput,
 } from "../api/hosts";
 
@@ -89,6 +89,13 @@ function NewHostDialog({ open, onClose, onSubmit, submitting }: NewHostDialogPro
   const [form, setForm] = useState<HostInput>(EMPTY_FORM);
   const [tags, setTags] = useState("");
 
+  // Show what auto-assignment would pick from the overlay pool.
+  const { data: nextWG } = useQuery({
+    queryKey: ["next-wg"],
+    queryFn: nextWGAddress,
+    enabled: open,
+  });
+
   const set = (key: keyof HostInput) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -115,8 +122,21 @@ function NewHostDialog({ open, onClose, onSubmit, submitting }: NewHostDialogPro
             <TextField label="Owner" value={form.owner} onChange={set("owner")} fullWidth />
           </Stack>
           <Stack direction="row" spacing={2}>
-            <TextField label="Address" value={form.address} onChange={set("address")} fullWidth />
-            <TextField label="WireGuard Address" value={form.wgAddress} onChange={set("wgAddress")} fullWidth />
+            <TextField
+              label="Address" value={form.address} onChange={set("address")} fullWidth
+              helperText="Management address used to reach the host during enrollment"
+            />
+            <TextField
+              label="WireGuard Address" value={form.wgAddress} onChange={set("wgAddress")} fullWidth
+              placeholder={nextWG?.nextWgAddress ? `auto: ${nextWG.nextWgAddress}` : "auto-assign"}
+              helperText={
+                nextWG?.exhausted
+                  ? `Overlay pool ${nextWG.subnet} exhausted`
+                  : nextWG?.nextWgAddress
+                    ? `Leave blank to auto-assign ${nextWG.nextWgAddress} from ${nextWG.subnet}`
+                    : "Leave blank to auto-assign from the overlay pool"
+              }
+            />
           </Stack>
           <Stack direction="row" spacing={2}>
             <TextField

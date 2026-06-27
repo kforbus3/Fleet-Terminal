@@ -26,6 +26,7 @@ func Mount(r chi.Router, d *app.Deps) {
 		pr.With(d.Auth.RequirePermission("Host.View")).Get("/hosts", h.list)
 		pr.With(d.Auth.RequirePermission("Host.View")).Get("/hosts/{id}", h.get)
 		pr.With(d.Auth.RequirePermission("Host.View")).Get("/hosts/stats/status", h.statusStats)
+		pr.With(d.Auth.RequirePermission("Host.View")).Get("/hosts/wg/next", h.nextWG)
 		pr.With(d.Auth.RequirePermission("Host.Enroll")).Post("/hosts", h.create)
 		pr.With(d.Auth.RequirePermission("Host.Edit")).Put("/hosts/{id}", h.update)
 		pr.With(d.Auth.RequirePermission("Host.Delete")).Delete("/hosts/{id}", h.del)
@@ -72,6 +73,17 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, host)
+}
+
+// nextWG returns the next free overlay address so the create dialog can show
+// what auto-assignment would pick (and the overlay subnet).
+func (h *handler) nextWG(w http.ResponseWriter, r *http.Request) {
+	next, err := h.d.Store.NextFreeWGAddress(r.Context(), h.d.Cfg.WGJumpIP)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"nextWgAddress": "", "subnet": h.d.Cfg.WGSubnet, "exhausted": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nextWgAddress": next, "subnet": h.d.Cfg.WGSubnet})
 }
 
 func (h *handler) statusStats(w http.ResponseWriter, r *http.Request) {

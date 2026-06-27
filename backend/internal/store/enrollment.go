@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -106,4 +108,35 @@ func (s *Store) SetHostWGAddress(ctx context.Context, hostID uuid.UUID, wgAddr s
 	_, err := s.pool.Exec(ctx,
 		`UPDATE hosts SET wg_address=NULLIF($2,'')::inet, updated_at=now() WHERE id=$1`, hostID, wgAddr)
 	return err
+}
+
+// WGAddressInUse reports whether wgAddr is already assigned to a host other than
+// exceptID (use uuid.Nil to consider all hosts).
+func (s *Store) WGAddressInUse(ctx context.Context, wgAddr string, exceptID uuid.UUID) (bool, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM hosts WHERE wg_address = $1::inet AND id <> $2`, wgAddr, exceptID).Scan(&n)
+	return n > 0, err
+}
+
+// NextFreeWGAddress returns the lowest unused /24 host address in the overlay
+// whose network is derived from jumpIP, skipping the jump host's own address.
+func (s *Store) NextFreeWGAddress(ctx context.Context, jumpIP string) (string, error) {
+	used, err := s.UsedWGAddresses(ctx)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.TrimSpace(jumpIP), ".")
+	if len(parts) != 4 {
+		return "", fmt.Errorf("invalid jump ip %q", jumpIP)
+	}
+	prefix := strings.Join(parts[:3], ".")
+	for n := 10; n <= 250; n++ {
+		cand := fmt.Sprintf("%s.%d", prefix, n)
+		if cand == jumpIP || used[cand] {
+			continue
+		}
+		return cand, nil
+	}
+	return "", fmt.Errorf("no free overlay addresses")
 }

@@ -99,11 +99,20 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		step("collect_facts", "skipped", ferr.Error())
 	}
 
-	// 4) Allocate an overlay address (reuse the host's existing one on re-enroll)
-	//    and bring up WireGuard on the host.
-	wgIP := host.WGAddress
-	if !isOverlayAddr(wgIP, s.cfg.WGJumpIP) {
-		wgIP, err = s.assignWGIP(ctx)
+	// 4) Determine the overlay address. If the operator specified one, validate
+	//    it; otherwise auto-assign the lowest free address from the pool.
+	wgIP := strings.TrimSpace(host.WGAddress)
+	if wgIP != "" {
+		if !isOverlayAddr(wgIP, s.cfg.WGJumpIP) {
+			return fail("assign_overlay_address",
+				fmt.Errorf("WireGuard address %q is not in the overlay subnet %s", wgIP, s.cfg.WGSubnet))
+		}
+		if inUse, _ := s.store.WGAddressInUse(ctx, wgIP, host.ID); inUse {
+			return fail("assign_overlay_address",
+				fmt.Errorf("WireGuard address %s is already assigned to another host", wgIP))
+		}
+	} else {
+		wgIP, err = s.store.NextFreeWGAddress(ctx, s.cfg.WGJumpIP)
 		if err != nil {
 			return fail("assign_overlay_address", err)
 		}
@@ -235,26 +244,6 @@ func (s *Service) recordFacts(ctx context.Context, hostID uuid.UUID, facts strin
 		inv.SSHVersion = strings.TrimSpace(lines[4])
 	}
 	_ = s.store.UpsertInventory(ctx, hostID, inv)
-}
-
-// assignWGIP allocates the lowest free /24 host address in the overlay.
-func (s *Service) assignWGIP(ctx context.Context) (string, error) {
-	used, err := s.store.UsedWGAddresses(ctx)
-	if err != nil {
-		return "", err
-	}
-	prefix := ipPrefix24(s.cfg.WGJumpIP)
-	if prefix == "" {
-		return "", fmt.Errorf("invalid WG jump ip %q", s.cfg.WGJumpIP)
-	}
-	for n := 10; n <= 250; n++ {
-		cand := fmt.Sprintf("%s.%d", prefix, n)
-		if cand == s.cfg.WGJumpIP || used[cand] {
-			continue
-		}
-		return cand, nil
-	}
-	return "", fmt.Errorf("no free overlay addresses in %s", s.cfg.WGSubnet)
 }
 
 // --- small helpers ---
