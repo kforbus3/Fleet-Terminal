@@ -38,7 +38,9 @@ the first Super Administrator. See the [Administrator Guide](./admin-guide.md).
 
 ## Key make targets
 
-Run `make help` for the full list. Highlights: `make up` / `make up-app`,
-`make down`, `make clean` (destroys data), `make logs`, `make ps`,
+Run `make help` for the full list. Highlights: `make up` (full stack + test
+fabric) / `make up-app` (app only) / `make up-single` (single-server production:
+app + co-located jump host), `make down`, `make clean` (destroys data),
+`make logs`, `make ps`,
 `make backend-build`, `make backend-test`, `make frontend-test`, `make test`,
 `make lint`, `make tidy`.

@@ -3,6 +3,7 @@
 
 COMPOSE        := docker compose -f deploy/compose/docker-compose.yml
 COMPOSE_FABRIC := $(COMPOSE) -f deploy/compose/docker-compose.testfabric.yml
+COMPOSE_SINGLE := $(COMPOSE) -f deploy/compose/docker-compose.jumphost.yml
 
 .DEFAULT_GOAL := help
 
@@ -22,6 +23,12 @@ up: env ## Build & start the full stack + test fabric
 .PHONY: up-app
 up-app: env ## Start only the application stack (no test fabric)
 	$(COMPOSE) up -d --build
+
+.PHONY: up-single
+up-single: env ## Single-server production: app stack + co-located jump host (VPN server)
+	$(COMPOSE_SINGLE) up -d --build
+	@echo "Single-server stack up. Set FLEET_WG_JUMP_ENDPOINT to the host's public"
+	@echo "address:port and open that UDP port; the jump host auto-trusts the CA."
 
 .PHONY: trust
 trust: ## Seed the test-fabric nodes with the backend's CA (run once after `make up`)

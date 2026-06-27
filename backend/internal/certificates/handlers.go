@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -19,6 +20,11 @@ import (
 // Mount attaches certificate management routes.
 func Mount(r chi.Router, d *app.Deps, caMgr *ca.CA) {
 	h := &handler{d: d, ca: caMgr}
+	// Public: the active user CA *public* key(s), in authorized_keys format. The
+	// CA public key is not secret (it is installed as TrustedUserCAKeys on every
+	// managed host); serving it unauthenticated lets a co-located jump host
+	// self-trust the CA on startup and stay current across CA rotation.
+	r.Get("/certificates/ca/pub", h.caPub)
 	r.Group(func(pr chi.Router) {
 		pr.Use(d.Auth.RequireAuth)
 		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Get("/certificates", h.list)
@@ -46,6 +52,18 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		certs = []models.SSHCertificate{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"certificates": certs})
+}
+
+// caPub serves the active user CA public key(s) as text/plain (one per line), for
+// a host or jump host to install as TrustedUserCAKeys. Unauthenticated by design.
+func (h *handler) caPub(w http.ResponseWriter, r *http.Request) {
+	keys, err := h.d.Store.ListActiveCAPublicKeys(r.Context(), "user")
+	if err != nil || len(keys) == 0 {
+		http.Error(w, "no active CA", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(strings.Join(keys, "\n") + "\n"))
 }
 
 func (h *handler) listCA(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,7 @@ RUN apt-get update \
       iptables \
       sudo \
       ca-certificates \
+      curl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=wgbuild /src/wireguard-go /usr/local/bin/wireguard-go

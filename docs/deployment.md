@@ -34,8 +34,10 @@ Operators ──HTTPS/WSS──> Reverse proxy ──> frontend (nginx) ──/a
 
 - Docker + Docker Compose (the only hard requirement for the app stack — no local
   Go/Node/Postgres toolchain needed).
-- A jump host running WireGuard + OpenSSH that the backend can SSH to and that your
-  managed hosts can reach on UDP (default 51820). The test fabric ships one.
+- A **jump host** running WireGuard + OpenSSH that the backend can SSH to and that
+  your managed hosts can reach on UDP (default 51820). You can **co-locate it as a
+  container** on the same Docker server (single-server deployment, §5a) or run it
+  on a separate box (§5b).
 - TLS termination for production (a reverse proxy such as Nginx Proxy Manager,
   Caddy, or an ingress controller) with a certificate (e.g. Let's Encrypt).
 
@@ -98,27 +100,62 @@ first Super Administrator, then enroll a fabric host and connect a terminal. See
 
 ## 5. Production stack (Docker Compose)
 
-1. **Provision** a Docker host and a jump host (WireGuard server). Point the
-   managed hosts' route to the jump host's public WireGuard endpoint.
-2. **Configure** `.env` from `.env.production.example`: real secrets, your
+Common to both layouts:
+
+1. **Configure** `.env` from `.env.production.example`: real secrets, your
    `FLEET_PUBLIC_URL`, `FLEET_COOKIE_SECURE=true`, `FLEET_ALLOW_BOOTSTRAP=false`
    (after first run), and `FLEET_WG_JUMP_ENDPOINT` set to the jump host's
-   **publicly routable** `host:port` (not an internal name).
-3. **Start** the application stack only (no test fabric):
-
-   ```sh
-   make up-app          # or: docker compose -f deploy/compose/docker-compose.yml up -d
-   ```
-
-4. **Persist data.** PostgreSQL data and recordings live in named volumes; back
+   **publicly routable** `host:port` (not an internal name) — this is what your
+   managed hosts dial over UDP.
+2. **Persist data.** PostgreSQL data and recordings live in named volumes; back
    them up (see [disaster-recovery.md](./disaster-recovery.md)). Point the DB at a
    managed Postgres in production by overriding `FLEET_DATABASE_URL`.
-5. **Front it with TLS.** Put a reverse proxy in front, terminate HTTPS, and
+3. **Front it with TLS.** Put a reverse proxy in front, terminate HTTPS, and
    forward to the `frontend` container (which proxies `/api` to the backend).
-   Only the proxy should be internet-reachable. Full reverse-proxy, rate-limit,
-   and WAF guidance is in [internet-exposure.md](./internet-exposure.md).
-6. **Bootstrap.** Browse to the URL, create the Super Administrator, then set
+   Only the proxy should be internet-reachable. Reverse-proxy, rate-limit, and
+   WAF guidance is in [internet-exposure.md](./internet-exposure.md).
+4. **Bootstrap.** Browse to the URL, create the Super Administrator, then set
    `FLEET_ALLOW_BOOTSTRAP=false` and restart the backend.
+
+### 5a. Single server (co-located jump host)
+
+Run **everything on one Docker host** — database, cache, backend, frontend, and
+the WireGuard jump host:
+
+```sh
+make up-single   # app stack + deploy/compose/docker-compose.jumphost.yml
+```
+
+The bundled jump host:
+
+- **publishes** the WireGuard UDP port (`FLEET_WG_PORT`, default 51820) so remote
+  managed hosts can reach it — **open that UDP port on the host firewall**;
+- **auto-trusts the Fleet CA** by polling the backend's public CA endpoint
+  (`GET /api/v1/certificates/ca/pub`) — no manual trust step, and it tracks CA
+  rotation automatically;
+- **persists** its WireGuard keypair + peers (`jump_wg`) and SSH host key
+  (`jump_ssh`) on volumes, so restarts/upgrades don't break enrolled hosts or
+  `known_hosts` pinning.
+
+Set `FLEET_WG_JUMP_ENDPOINT=<server-public-host>:51820` in `.env` so enrolled
+hosts dial the right address. The backend reaches the jump host internally at its
+default `jumphost:22`.
+
+> Co-locating is ideal for small/single-server deployments. For larger or
+> higher-security setups, keep the jump host on a separate minimal box (§5b) so
+> public WireGuard ingress isn't on the control-plane server.
+
+### 5b. External jump host (separate box)
+
+Run only the app stack and point it at a jump host you operate elsewhere:
+
+```sh
+make up-app      # or: docker compose -f deploy/compose/docker-compose.yml up -d
+```
+
+Set `FLEET_JUMP_HOST` / `FLEET_JUMP_USER` to your jump host, ensure it trusts the
+Fleet CA (`GET /api/v1/certificates/ca/pub`) and runs WireGuard on
+`FLEET_WG_JUMP_ENDPOINT`. See §6.
 
 ### Other deployment targets
 
@@ -139,8 +176,15 @@ The jump host is the single egress point. It must:
 - be reachable from managed hosts at `FLEET_WG_JUMP_ENDPOINT` (UDP).
 
 Enrollment adds each managed host as a WireGuard **peer** on the jump host
-automatically. On macOS/Docker Desktop the test fabric uses userspace
-`wireguard-go`; production typically uses the kernel module.
+automatically. The container uses userspace `wireguard-go`, so it needs no kernel
+module — it runs on any Linux Docker host with `NET_ADMIN` + `/dev/net/tun`
+(already set in the overlay).
+
+The **co-located** jump host (§5a) satisfies all three requirements automatically:
+it self-trusts the CA on boot, generates and persists its WireGuard keypair, and
+re-applies persisted peers on restart. For an **external** jump host you establish
+CA trust once (install `GET /api/v1/certificates/ca/pub` as `TrustedUserCAKeys`,
+principal `fleet`) and run WireGuard yourself.
 
 ---
 

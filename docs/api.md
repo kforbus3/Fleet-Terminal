@@ -307,11 +307,17 @@ An approval mints a `temporary_permissions` grant that expires automatically.
 
 | Method | Path | Required permission |
 |--------|------|---------------------|
+| GET | `/api/v1/certificates/ca/pub` | **none** (public key) |
 | GET | `/api/v1/certificates` | `Certificate.Manage` |
 | GET | `/api/v1/certificates/ca` | `Certificate.Manage` |
 | POST | `/api/v1/certificates/ca/rotate` | `Certificate.Manage` |
 | GET | `/api/v1/certificates/krl` | `Certificate.Manage` |
 | POST | `/api/v1/certificates/{serial}/revoke` | `Certificate.Manage` |
+
+**`GET /certificates/ca/pub`** → `text/plain`, the active user CA public key(s) in
+`authorized_keys` format (one per line) for use as `TrustedUserCAKeys`.
+Unauthenticated by design — the CA *public* key is not secret. The co-located
+jump host polls this to self-trust the CA.
 
 **`GET /certificates/ca`** →
 ```json

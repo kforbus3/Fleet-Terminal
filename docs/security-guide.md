@@ -35,7 +35,9 @@ and operational recommendations.
 
 - The CA private key is stored **encrypted at rest** in `ca_keys.private_enc`,
   encrypted with `FLEET_CA_PASSPHRASE` (≥16 bytes, required in production). It
-  never leaves the backend process.
+  never leaves the backend process. The CA **public** key is served unauthenticated
+  at `GET /api/v1/certificates/ca/pub` — it is not secret (it is installed as
+  `TrustedUserCAKeys` on every host); a co-located jump host uses it to self-trust.
 - Every issued certificate has a unique, **never-reused serial** from
   `ssh_cert_serial_seq`, enabling precise revocation.
 - **Revocation** is recorded in `cert_revocations` and published as a Key
