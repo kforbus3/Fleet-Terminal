@@ -159,3 +159,28 @@ as a security incident, and preserve evidence (DB snapshot + exports).
   only if the CA had to be regenerated.
 - Rehearse restores quarterly and after any schema migration. The whole stack is
   reproducible via `make up` / `make up-app`, so DR drills are cheap.
+
+## Backup & Restore (operational)
+
+**Backup** — Admins can download a full logical backup from **Settings → Backup & Restore**
+(or `GET /api/v1/system/backup`, which streams `pg_dump --clean --if-exists --no-owner`).
+Automate it with a cron that calls the endpoint with an admin token, or run `pg_dump`
+directly against `FLEET_DATABASE_URL`.
+
+**Restore** — performed offline (intentionally not exposed in the web UI):
+
+```bash
+psql "$FLEET_DATABASE_URL" < fleet-backup.sql
+```
+
+**Recovery when locked out** — use the bundled `fleetctl` CLI (ships in the backend image):
+
+```bash
+fleetctl create-admin <username> <password>   # new Super Administrator
+fleetctl reset-mfa <username>                  # clear a user's MFA
+fleetctl enable-user <username>                # re-enable + unlock
+fleetctl rotate-ca                             # rotate the user CA
+```
+
+Note: SSH **session recordings** live on the recordings volume (`FLEET_RECORDING_DIR`),
+not in the database — back that volume up alongside the SQL dump.

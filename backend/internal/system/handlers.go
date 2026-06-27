@@ -3,12 +3,18 @@
 package system
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os/exec"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/fleet-terminal/backend/internal/app"
+	"github.com/fleet-terminal/backend/internal/auth"
 	"github.com/fleet-terminal/backend/internal/jobs"
 	"github.com/fleet-terminal/backend/internal/models"
 )
@@ -19,6 +25,7 @@ func Mount(r chi.Router, d *app.Deps, reg *jobs.Registry) {
 	r.Group(func(pr chi.Router) {
 		pr.Use(d.Auth.RequireAuth)
 		pr.With(d.Auth.RequirePermission("System.Configure")).Get("/system/jobs", h.jobs)
+		pr.With(d.Auth.RequirePermission("System.Configure")).Get("/system/backup", h.backup)
 	})
 }
 
@@ -40,6 +47,41 @@ func (h *handler) jobs(w http.ResponseWriter, r *http.Request) {
 		"schedulers":      h.reg.Snapshot(),
 		"enrollmentJobs":  enrollJobs,
 	})
+}
+
+// backup streams a logical database dump (pg_dump) as a download. Restore is an
+// out-of-band operation (see the disaster-recovery guide) and is intentionally
+// not exposed over the web UI.
+func (h *handler) backup(w http.ResponseWriter, r *http.Request) {
+	if _, err := exec.LookPath("pg_dump"); err != nil {
+		writeError(w, http.StatusNotImplemented, "pg_dump not available in this image")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	// pg_dump reads the connection URI directly; --no-owner keeps the dump portable.
+	cmd := exec.CommandContext(ctx, "pg_dump", "--no-owner", "--clean", "--if-exists", h.d.Cfg.DatabaseURL)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "backup failed to start")
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		writeError(w, http.StatusInternalServerError, "backup failed to start")
+		return
+	}
+	filename := fmt.Sprintf("fleet-backup-%d.sql", time.Now().Unix())
+	w.Header().Set("Content-Type", "application/sql")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	_, _ = io.Copy(w, stdout)
+	_ = cmd.Wait()
+
+	p := auth.MustPrincipal(r)
+	if p != nil {
+		_, _ = h.d.Store.AppendAudit(r.Context(), models.AuditEvent{
+			ActorID: &p.UserID, ActorName: p.Username, Action: "system.backup",
+		})
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

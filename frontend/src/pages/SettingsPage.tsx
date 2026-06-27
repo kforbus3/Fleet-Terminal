@@ -7,6 +7,7 @@ import {
 import EditIcon from "@mui/icons-material/Edit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listSettings, setSetting } from "../api/admin";
+import { downloadBackup } from "../api/system";
 
 // System settings editor. Values are arbitrary JSON; the editor exposes them as
 // raw JSON text and validates before PUTting the new value.
@@ -46,6 +47,8 @@ export function SettingsPage() {
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 2 }}>System Settings</Typography>
+
+      <BackupCard />
 
       <TableContainer component={Paper} variant="outlined">
         <Table size="small">
@@ -95,5 +98,24 @@ export function SettingsPage() {
         </DialogActions>
       </Dialog>
     </Box>
+  );
+}
+
+// BackupCard downloads a logical database backup. Restore is documented as an
+// out-of-band operation in the disaster-recovery guide.
+function BackupCard() {
+  const backupMut = useMutation({ mutationFn: downloadBackup });
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+      <Typography variant="h6">Backup &amp; Restore</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+        Download a full logical database backup (pg_dump). Restore is performed offline:
+        <code> psql "$FLEET_DATABASE_URL" &lt; fleet-backup.sql</code> — see the disaster-recovery guide.
+      </Typography>
+      {backupMut.isError && <Alert severity="error" sx={{ mb: 1 }}>Backup failed.</Alert>}
+      <Button variant="contained" onClick={() => backupMut.mutate()} disabled={backupMut.isPending}>
+        {backupMut.isPending ? "Preparing…" : "Download backup"}
+      </Button>
+    </Paper>
   );
 }

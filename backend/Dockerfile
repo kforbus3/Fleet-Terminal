@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/fleetctl ./cmd/fleetctl
 
 FROM alpine:3.20 AS runtime
-RUN apk add --no-cache ca-certificates openssh-client tzdata && \
+RUN apk add --no-cache ca-certificates openssh-client tzdata postgresql16-client && \
     addgroup -S fleet && adduser -S -G fleet fleet && \
     mkdir -p /var/lib/fleet/recordings && chown -R fleet:fleet /var/lib/fleet
 COPY --from=build /out/fleetd /usr/local/bin/fleetd
