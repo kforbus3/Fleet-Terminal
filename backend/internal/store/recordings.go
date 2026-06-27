@@ -57,6 +57,36 @@ func (s *Store) PruneRecordingsBefore(ctx context.Context, before time.Time) (pa
 	return paths, bytes, rows.Err()
 }
 
+// RecordingSessionIDs returns the set of SSH session ids that have a recording.
+func (s *Store) RecordingSessionIDs(ctx context.Context) (map[uuid.UUID]bool, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT ssh_session_id FROM session_recordings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]bool{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// CloseStaleSessions marks any lingering "active" SSH sessions as closed. Run on
+// startup: no terminal session survives a backend restart, so any still marked
+// active are stale (e.g. left over from an abrupt disconnect).
+func (s *Store) CloseStaleSessions(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE ssh_sessions SET status='closed', ended_at=COALESCE(ended_at, now()) WHERE status='active'`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // RecordingsStorageBytes returns the total size of all recordings.
 func (s *Store) RecordingsStorageBytes(ctx context.Context) (int64, int64, error) {
 	var count, total int64

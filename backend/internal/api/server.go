@@ -116,6 +116,10 @@ func (s *Server) InitBackground(ctx context.Context) error {
 	if err := s.CA.EnsureUserCA(ctx); err != nil {
 		return err
 	}
+	// Reconcile: no SSH session survives a restart; close any stale "active" rows.
+	if n, err := s.Store.CloseStaleSessions(ctx); err == nil && n > 0 {
+		s.Log.Info("closed stale ssh sessions on startup", "count", n)
+	}
 	go s.renewalLoop(ctx)
 	go s.reaperLoop(ctx)
 	go s.retentionLoop(ctx)

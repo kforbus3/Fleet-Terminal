@@ -75,6 +75,13 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	if sessions == nil {
 		sessions = []models.SSHSession{}
 	}
+	// Flag which sessions actually have a recording so the UI only offers
+	// export/replay/delete for those.
+	if withRec, rerr := h.d.Store.RecordingSessionIDs(r.Context()); rerr == nil {
+		for i := range sessions {
+			sessions[i].HasRecording = withRec[sessions[i].ID]
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions, "count": len(sessions)})
 }
 

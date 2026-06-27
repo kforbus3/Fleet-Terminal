@@ -160,6 +160,9 @@ type SSHSession struct {
 	BytesIn    int64      `json:"bytesIn"`
 	BytesOut   int64      `json:"bytesOut"`
 	ClientIP   string     `json:"clientIp,omitempty"`
+
+	// HasRecording is populated by the list endpoint (not stored).
+	HasRecording bool `json:"hasRecording"`
 }
 
 // Recording is replay metadata for an SSH session.

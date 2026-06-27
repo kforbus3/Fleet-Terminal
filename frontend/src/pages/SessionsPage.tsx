@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Box, Button, Chip, Drawer, IconButton, Paper, Stack, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TextField, Tooltip, Typography, Divider, CircularProgress,
+  Alert, Box, Button, Chip, Drawer, IconButton, Paper, Snackbar, Stack, Table, TableBody,
+  TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography, Divider,
+  CircularProgress,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import DownloadIcon from "@mui/icons-material/Download";
 import DeleteIcon from "@mui/icons-material/Delete";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -113,7 +115,17 @@ export function SessionsPage() {
   const { data: stats } = useQuery({ queryKey: ["recording-stats"], queryFn: recordingStats });
   const [active, setActive] = useState<SSHSession | null>(null);
   const [pruneDays, setPruneDays] = useState("30");
+  const [snack, setSnack] = useState<string | null>(null);
   const canManage = useAuthStore((s) => s.has("System.Configure"));
+
+  const exportRec = async (s: SSHSession) => {
+    try {
+      await downloadRecording(s.id, `${s.username}@${s.hostname}`);
+      setSnack("Recording exported — open the .html file to watch.");
+    } catch {
+      setSnack("Could not export this recording.");
+    }
+  };
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["sessions"] });
@@ -173,7 +185,11 @@ export function SessionsPage() {
           </TableHead>
           <TableBody>
             {sessions.map((s) => (
-              <TableRow key={s.id} hover sx={{ cursor: "pointer" }} onClick={() => setActive(s)}>
+              <TableRow
+                key={s.id} hover
+                sx={{ cursor: s.hasRecording ? "pointer" : "default" }}
+                onClick={() => s.hasRecording && setActive(s)}
+              >
                 <TableCell>{new Date(s.startedAt).toLocaleString()}</TableCell>
                 <TableCell>{s.username}</TableCell>
                 <TableCell>{s.hostname}</TableCell>
@@ -181,20 +197,31 @@ export function SessionsPage() {
                 <TableCell>{s.bytesIn} / {s.bytesOut}</TableCell>
                 <TableCell>{s.clientIp}</TableCell>
                 <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                  <Tooltip title="Export recording (.cast)">
-                    <IconButton size="small" onClick={() => void downloadRecording(s.id)}>
-                      <DownloadIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  {canManage && (
-                    <Tooltip title="Delete recording">
-                      <IconButton
-                        size="small" color="error"
-                        onClick={() => { if (window.confirm("Delete this recording?")) delMut.mutate(s.id); }}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                  {s.hasRecording ? (
+                    <>
+                      <Tooltip title="Watch (replay)">
+                        <IconButton size="small" onClick={() => setActive(s)}>
+                          <PlayArrowIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Download playable recording (.html) to watch later">
+                        <IconButton size="small" onClick={() => void exportRec(s)}>
+                          <DownloadIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      {canManage && (
+                        <Tooltip title="Delete recording">
+                          <IconButton
+                            size="small" color="error"
+                            onClick={() => { if (window.confirm("Delete this recording?")) delMut.mutate(s.id); }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">no recording</Typography>
                   )}
                 </TableCell>
               </TableRow>
@@ -238,6 +265,13 @@ export function SessionsPage() {
           </Box>
         )}
       </Drawer>
+
+      <Snackbar
+        open={Boolean(snack)} autoHideDuration={4000} onClose={() => setSnack(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="info" onClose={() => setSnack(null)}>{snack}</Alert>
+      </Snackbar>
     </Box>
   );
 }

@@ -246,15 +246,23 @@ func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal
 	<-done
 	_ = session.Close()
 
+	// Finalize with a FRESH context: the request context (ctx) is cancelled once
+	// the WebSocket closes, which would otherwise abort these writes and leave the
+	// recording file orphaned without a DB row.
+	fin, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	exitCode := 0
 	if capture != nil {
 		res := capture.Close()
-		_, _ = h.d.Store.CreateRecording(ctx, recordingInput(sshSessionID, res))
+		if _, err := h.d.Store.CreateRecording(fin, recordingInput(sshSessionID, res)); err != nil {
+			h.d.Log.Warn("save recording", "session", sshSessionID, "err", err)
+		}
 	}
 	if sshSessionID != uuid.Nil {
-		_ = h.d.Store.EndSSHSession(ctx, sshSessionID, exitCode, bytesIn, bytesOut)
+		_ = h.d.Store.EndSSHSession(fin, sshSessionID, exitCode, bytesIn, bytesOut)
 	}
-	_, _ = h.d.Store.AppendAudit(ctx, models.AuditEvent{
+	_, _ = h.d.Store.AppendAudit(fin, models.AuditEvent{
 		ActorID: &p.UserID, ActorName: p.Username, Action: "session.end",
 		TargetKind: "host", TargetID: host.ID.String(),
 		Detail: map[string]any{"bytesIn": bytesIn, "bytesOut": bytesOut, "sshSessionId": sshSessionID},
