@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/fleet-terminal/backend/internal/admin"
 	"github.com/fleet-terminal/backend/internal/app"
@@ -146,8 +147,11 @@ func dedupe(in []string) []string {
 	return out
 }
 
-// Handler returns the root HTTP handler.
-func (s *Server) Handler() http.Handler { return s.router }
+// Handler returns the root HTTP handler, instrumented with OpenTelemetry so each
+// request is a span (a no-op when tracing is disabled).
+func (s *Server) Handler() http.Handler {
+	return otelhttp.NewHandler(s.router, "fleet-api")
+}
 
 func (s *Server) buildRouter() chi.Router {
 	r := chi.NewRouter()
