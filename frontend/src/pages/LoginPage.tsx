@@ -13,10 +13,13 @@ import { bootstrapStatus } from "../api/auth";
 export function LoginPage() {
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
+  const verifyMfa = useAuthStore((s) => s.verifyMfa);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [code, setCode] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -35,8 +38,17 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(username, password);
-      navigate("/", { replace: true });
+      if (challenge) {
+        await verifyMfa(challenge, code);
+        navigate("/", { replace: true });
+        return;
+      }
+      const res = await login(username, password);
+      if (res.mfaRequired && res.challenge) {
+        setChallenge(res.challenge);
+      } else {
+        navigate("/", { replace: true });
+      }
     } catch (err) {
       setError(extractError(err));
     } finally {
@@ -63,34 +75,49 @@ export function LoginPage() {
             </Typography>
           </Stack>
           <Typography variant="h5" gutterBottom>
-            Sign in
+            {challenge ? "Two-factor verification" : "Sign in"}
           </Typography>
           <Box component="form" onSubmit={onSubmit} sx={{ mt: 2 }}>
             <Stack spacing={2}>
               {error && <Alert severity="error">{error}</Alert>}
-              <TextField
-                label="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoFocus
-                fullWidth
-                required
-              />
-              <TextField
-                label="Password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                fullWidth
-                required
-              />
+              {challenge ? (
+                <TextField
+                  label="Authenticator code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  autoFocus
+                  fullWidth
+                  required
+                  inputProps={{ inputMode: "numeric", pattern: "[0-9]*", maxLength: 6 }}
+                  helperText="Enter the 6-digit code from your authenticator app"
+                />
+              ) : (
+                <>
+                  <TextField
+                    label="Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    autoFocus
+                    fullWidth
+                    required
+                  />
+                  <TextField
+                    label="Password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    fullWidth
+                    required
+                  />
+                </>
+              )}
               <Button
                 type="submit"
                 variant="contained"
                 size="large"
                 disabled={submitting}
               >
-                {submitting ? "Signing in…" : "Sign in"}
+                {submitting ? "Please wait…" : challenge ? "Verify" : "Sign in"}
               </Button>
             </Stack>
           </Box>

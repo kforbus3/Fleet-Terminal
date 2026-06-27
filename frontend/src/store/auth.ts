@@ -9,7 +9,10 @@ interface AuthState {
   accessToken: string | null;
   isSuperAdmin: boolean;
   loaded: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  // login returns {mfaRequired:true, challenge} when a second factor is needed;
+  // otherwise the session is established.
+  login: (username: string, password: string) => Promise<{ mfaRequired?: boolean; challenge?: string }>;
+  verifyMfa: (challenge: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
   loadMe: () => Promise<void>;
   has: (perm: string) => boolean;
@@ -27,8 +30,19 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   login: async (username, password) => {
     const res = await authApi.login(username, password);
-    setAccessToken(res.accessToken);
-    set({ user: res.user, accessToken: res.accessToken });
+    if (res.mfaRequired) {
+      return { mfaRequired: true, challenge: res.challenge };
+    }
+    setAccessToken(res.accessToken ?? null);
+    set({ user: res.user ?? null, accessToken: res.accessToken ?? null });
+    await get().loadMe();
+    return {};
+  },
+
+  verifyMfa: async (challenge, code) => {
+    const res = await authApi.mfaVerify(challenge, code);
+    setAccessToken(res.accessToken ?? null);
+    set({ user: res.user ?? null, accessToken: res.accessToken ?? null });
     await get().loadMe();
   },
 

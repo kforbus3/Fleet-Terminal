@@ -12,12 +12,14 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/pkg/sftp v1.13.10
+	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.20.5
 	golang.org/x/crypto v0.41.0
 )
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/fleet-terminal/backend/internal/store"
 )
 
 // Handler exposes auth HTTP endpoints.
@@ -22,11 +23,16 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
+	r.Post("/auth/mfa/verify", h.mfaVerify) // login step 2 (uses challenge token)
 	r.Group(func(pr chi.Router) {
 		pr.Use(h.svc.RequireAuth)
 		pr.Post("/auth/logout", h.logout)
 		pr.Get("/auth/me", h.me)
 		pr.Post("/auth/change-password", h.changePassword)
+		pr.Get("/auth/mfa", h.mfaList)
+		pr.Post("/auth/mfa/totp/enroll", h.mfaEnroll)
+		pr.Post("/auth/mfa/totp/confirm", h.mfaConfirm)
+		pr.Delete("/auth/mfa/{id}", h.mfaDelete)
 	})
 }
 
@@ -51,6 +57,26 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+	// If the account has a confirmed second factor, require it before issuing a
+	// session: return a short-lived challenge the client exchanges at /auth/mfa/verify.
+	if hasMFA, _ := h.svc.store.HasConfirmedMFA(r.Context(), u.ID); hasMFA {
+		challenge, cerr := h.svc.IssueMFAChallenge(u.ID)
+		if cerr != nil {
+			writeError(w, http.StatusInternalServerError, "could not start mfa")
+			return
+		}
+		_ = h.svc.store.RecordAuthEvent(r.Context(), models.AuthEvent{
+			UserID: &u.ID, Username: u.Username, Event: "mfa_challenge", IP: ip, UserAgent: ua,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"mfaRequired": true, "challenge": challenge})
+		return
+	}
+	h.completeLogin(w, r, u, ip, ua)
+}
+
+// completeLogin issues a session + tokens and writes the login response. Shared
+// by the password-only path and the post-MFA path.
+func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *models.User, ip, ua string) {
 	tokens, err := h.svc.CreateSession(r.Context(), u, ip, ua, true)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create session")
@@ -65,12 +91,45 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	h.setAuthCookies(w, tokens)
 	u.Roles, _ = h.svc.store.UserRoleNames(r.Context(), u.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"accessToken":     tokens.Access,
-		"accessExpiresAt": tokens.AccessExpiry,
-		"csrfToken":       tokens.CSRF,
-		"user":            u,
+		"accessToken":        tokens.Access,
+		"accessExpiresAt":    tokens.AccessExpiry,
+		"csrfToken":          tokens.CSRF,
+		"user":               u,
 		"mustChangePassword": u.MustChangePw,
 	})
+}
+
+// mfaVerify is login step 2: validate the TOTP code against the challenge.
+func (h *Handler) mfaVerify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Challenge string `json:"challenge"`
+		Code      string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	userID, err := h.svc.ParseMFAChallenge(req.Challenge)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "mfa challenge expired; sign in again")
+		return
+	}
+	secrets, err := h.svc.store.ConfirmedTOTPSecrets(r.Context(), userID)
+	if err != nil || !h.svc.VerifyUserTOTP(secrets, req.Code) {
+		ip, ua := clientMeta(r)
+		_ = h.svc.store.RecordAuthEvent(r.Context(), models.AuthEvent{
+			UserID: &userID, Event: "mfa_failure", IP: ip, UserAgent: ua,
+		})
+		writeError(w, http.StatusUnauthorized, "invalid verification code")
+		return
+	}
+	u, err := h.svc.store.GetUserByID(r.Context(), userID)
+	if err != nil || u.IsDisabled {
+		writeError(w, http.StatusUnauthorized, "account unavailable")
+		return
+	}
+	ip, ua := clientMeta(r)
+	h.completeLogin(w, r, u, ip, ua)
 }
 
 func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +229,92 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		ActorID: &p.UserID, ActorName: p.Username, Action: "auth.password_change",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password_changed"})
+}
+
+// mfaList returns the caller's registered factors.
+func (h *Handler) mfaList(w http.ResponseWriter, r *http.Request) {
+	p := MustPrincipal(r)
+	methods, err := h.svc.store.ListMFA(r.Context(), p.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list mfa")
+		return
+	}
+	if methods == nil {
+		methods = []store.MFAMethod{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"methods": methods})
+}
+
+// mfaEnroll generates a new TOTP secret and stores it as pending (unconfirmed).
+func (h *Handler) mfaEnroll(w http.ResponseWriter, r *http.Request) {
+	p := MustPrincipal(r)
+	secret, url, err := GenerateTOTP("Fleet Terminal", p.Username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not generate secret")
+		return
+	}
+	enc, err := h.svc.EncryptSecret(secret)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not protect secret")
+		return
+	}
+	if _, err := h.svc.store.CreateTOTPPending(r.Context(), p.UserID, "Authenticator app", enc); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not store method")
+		return
+	}
+	// The plaintext secret + otpauth URL are returned ONCE so the user can scan
+	// the QR / record the key; they are not retrievable afterward.
+	writeJSON(w, http.StatusOK, map[string]any{"secret": secret, "otpauthUrl": url})
+}
+
+// mfaConfirm validates a code against the pending secret and activates the factor.
+func (h *Handler) mfaConfirm(w http.ResponseWriter, r *http.Request) {
+	p := MustPrincipal(r)
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	enc, id, err := h.svc.store.PendingTOTPSecret(r.Context(), p.UserID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "no pending enrollment; start again")
+		return
+	}
+	secret, err := h.svc.DecryptSecret(enc)
+	if err != nil || !ValidateTOTP(secret, req.Code) {
+		writeError(w, http.StatusBadRequest, "invalid verification code")
+		return
+	}
+	if err := h.svc.store.ConfirmMFA(r.Context(), p.UserID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not confirm")
+		return
+	}
+	_, _ = h.svc.store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: &p.UserID, ActorName: p.Username, Action: "auth.mfa_enroll", TargetKind: "user",
+		TargetID: p.UserID.String(), Detail: map[string]any{"kind": "totp"},
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "confirmed"})
+}
+
+// mfaDelete removes one of the caller's factors.
+func (h *Handler) mfaDelete(w http.ResponseWriter, r *http.Request) {
+	p := MustPrincipal(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.svc.store.DeleteMFA(r.Context(), p.UserID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not remove")
+		return
+	}
+	_, _ = h.svc.store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: &p.UserID, ActorName: p.Username, Action: "auth.mfa_remove", TargetKind: "user",
+		TargetID: p.UserID.String(),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
 // --- cookie + helper plumbing ---

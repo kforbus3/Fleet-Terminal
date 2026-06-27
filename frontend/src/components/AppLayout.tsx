@@ -14,6 +14,7 @@ import GroupWorkIcon from "@mui/icons-material/GroupWork";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import SettingsIcon from "@mui/icons-material/Settings";
+import ShieldIcon from "@mui/icons-material/Shield";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import { Link as RouterLink, Outlet, useLocation } from "react-router-dom";
@@ -33,6 +34,7 @@ const NAV = [
   { to: "/groups", label: "Groups", icon: <GroupWorkIcon /> },
   { to: "/enrollment", label: "Enrollment", icon: <CloudUploadIcon /> },
   { to: "/certificates", label: "Certificates", icon: <VpnKeyIcon /> },
+  { to: "/security", label: "Security", icon: <ShieldIcon /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon /> },
 ];
 

@@ -20,11 +20,46 @@ export interface User {
 }
 
 export interface LoginResponse {
-  accessToken: string;
-  accessExpiresAt: string;
-  csrfToken: string;
-  user: User;
-  mustChangePassword: boolean;
+  // Present on success:
+  accessToken?: string;
+  accessExpiresAt?: string;
+  csrfToken?: string;
+  user?: User;
+  mustChangePassword?: boolean;
+  // Present when a second factor is required:
+  mfaRequired?: boolean;
+  challenge?: string;
+}
+
+export interface MfaMethod {
+  id: string;
+  kind: string;
+  label: string;
+  confirmed: boolean;
+  createdAt: string;
+}
+
+export async function mfaVerify(challenge: string, code: string): Promise<LoginResponse> {
+  const { data } = await api.post<LoginResponse>("/api/v1/auth/mfa/verify", { challenge, code });
+  return data;
+}
+
+export async function mfaList(): Promise<MfaMethod[]> {
+  const { data } = await api.get<{ methods: MfaMethod[] }>("/api/v1/auth/mfa");
+  return data.methods;
+}
+
+export async function mfaEnroll(): Promise<{ secret: string; otpauthUrl: string }> {
+  const { data } = await api.post<{ secret: string; otpauthUrl: string }>("/api/v1/auth/mfa/totp/enroll");
+  return data;
+}
+
+export async function mfaConfirm(code: string): Promise<void> {
+  await api.post("/api/v1/auth/mfa/totp/confirm", { code });
+}
+
+export async function mfaDelete(id: string): Promise<void> {
+  await api.delete(`/api/v1/auth/mfa/${id}`);
 }
 
 export interface MeResponse {

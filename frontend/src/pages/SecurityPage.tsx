@@ -1,0 +1,113 @@
+import { useState } from "react";
+import {
+  Alert, Box, Button, Card, CardContent, Chip, Divider, IconButton, List,
+  ListItem, ListItemText, Stack, TextField, Typography,
+} from "@mui/material";
+import DeleteIcon from "@mui/icons-material/Delete";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { mfaConfirm, mfaDelete, mfaEnroll, mfaList } from "../api/auth";
+
+// Per-user security settings: enroll and manage TOTP two-factor authentication.
+export function SecurityPage() {
+  const qc = useQueryClient();
+  const { data: methods } = useQuery({ queryKey: ["mfa"], queryFn: mfaList });
+  const [secret, setSecret] = useState<string | null>(null);
+  const [otpauth, setOtpauth] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+
+  const enrollMut = useMutation({
+    mutationFn: mfaEnroll,
+    onSuccess: (d) => { setSecret(d.secret); setOtpauth(d.otpauthUrl); setConfirmError(null); },
+  });
+  const confirmMut = useMutation({
+    mutationFn: () => mfaConfirm(code),
+    onSuccess: () => {
+      setSecret(null); setOtpauth(null); setCode("");
+      void qc.invalidateQueries({ queryKey: ["mfa"] });
+    },
+    onError: () => setConfirmError("Invalid code. Try the current code from your app."),
+  });
+  const deleteMut = useMutation({
+    mutationFn: mfaDelete,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["mfa"] }),
+  });
+
+  const confirmed = (methods ?? []).filter((m) => m.confirmed);
+
+  return (
+    <Box sx={{ maxWidth: 640 }}>
+      <Typography variant="h5" gutterBottom>Security</Typography>
+
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Stack direction="row" alignItems="center" justifyContent="space-between">
+            <Typography variant="h6">Two-factor authentication (TOTP)</Typography>
+            <Chip
+              size="small"
+              label={confirmed.length ? "Enabled" : "Disabled"}
+              color={confirmed.length ? "success" : "default"}
+            />
+          </Stack>
+          <Typography color="text.secondary" variant="body2" sx={{ mt: 1 }}>
+            Require a one-time code from an authenticator app at sign-in.
+          </Typography>
+
+          <List dense sx={{ mt: 1 }}>
+            {(methods ?? []).map((m) => (
+              <ListItem
+                key={m.id}
+                secondaryAction={
+                  <IconButton edge="end" color="error" onClick={() => deleteMut.mutate(m.id)}>
+                    <DeleteIcon />
+                  </IconButton>
+                }
+              >
+                <ListItemText
+                  primary={`${m.label} (${m.kind})`}
+                  secondary={m.confirmed ? "Active" : "Pending confirmation"}
+                />
+              </ListItem>
+            ))}
+          </List>
+
+          {!secret && (
+            <Button variant="contained" onClick={() => enrollMut.mutate()} disabled={enrollMut.isPending}>
+              Set up authenticator
+            </Button>
+          )}
+
+          {secret && (
+            <>
+              <Divider sx={{ my: 2 }} />
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Add this account to your authenticator app, then enter the current code to confirm.
+                The secret is shown only once.
+              </Alert>
+              <TextField
+                label="Secret key" value={secret} fullWidth size="small"
+                InputProps={{ readOnly: true }} sx={{ mb: 1 }}
+              />
+              <TextField
+                label="otpauth URL" value={otpauth ?? ""} fullWidth size="small"
+                InputProps={{ readOnly: true }} sx={{ mb: 2 }}
+                helperText="Paste into your authenticator, or generate a QR from this URL"
+              />
+              {confirmError && <Alert severity="error" sx={{ mb: 1 }}>{confirmError}</Alert>}
+              <Stack direction="row" spacing={2}>
+                <TextField
+                  label="6-digit code" value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  inputProps={{ inputMode: "numeric", maxLength: 6 }}
+                />
+                <Button variant="contained" onClick={() => confirmMut.mutate()} disabled={confirmMut.isPending}>
+                  Confirm
+                </Button>
+              </Stack>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </Box>
+  );
+}
