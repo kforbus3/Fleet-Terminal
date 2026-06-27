@@ -124,6 +124,9 @@ export interface EnrollParams {
   method: "password" | "trusted";
   bootstrapUser?: string;
   password?: string;
+  // Route the bootstrap SSH connection through the jump host (for hosts the
+  // backend can't reach directly but the jump host can).
+  viaJump?: boolean;
 }
 
 // Enroll installs CA trust + WireGuard on the host (when bootstrapping), sets up

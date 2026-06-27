@@ -33,6 +33,7 @@ type enrollReq struct {
 	Method        string `json:"method"`        // "password" | "trusted"
 	BootstrapUser string `json:"bootstrapUser"` // SSH user for password bootstrap
 	Password      string `json:"password"`      // SSH/sudo password for bootstrap
+	ViaJump       bool   `json:"viaJump"`       // route bootstrap through the jump host
 }
 
 func (h *handler) enroll(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +55,7 @@ func (h *handler) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.svc.Enroll(r.Context(), p.SessionID, host, &p.UserID, EnrollParams{
-		Method: req.Method, BootstrapUser: req.BootstrapUser, Password: req.Password,
+		Method: req.Method, BootstrapUser: req.BootstrapUser, Password: req.Password, ViaJump: req.ViaJump,
 	})
 	if err != nil {
 		// Surface the failed job so the UI can show which step failed.

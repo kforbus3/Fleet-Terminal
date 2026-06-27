@@ -10,7 +10,7 @@ import (
 )
 
 const hostCols = `id, hostname, description, environment, owner,
-	COALESCE(host(address),''), COALESCE(host(wg_address),''), ssh_port, ssh_user,
+	COALESCE(address,''), COALESCE(host(wg_address),''), ssh_port, ssh_user,
 	tags, enrolled, created_at, updated_at`
 
 func scanHost(row pgx.Row) (*models.Host, error) {
@@ -52,7 +52,7 @@ func (s *Store) CreateHost(ctx context.Context, in HostInput) (*models.Host, err
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
 			INSERT INTO hosts (hostname, description, environment, owner, address, wg_address, ssh_port, ssh_user, tags)
-			VALUES ($1,$2,$3,$4,NULLIF($5,'')::inet,NULLIF($6,'')::inet,$7,$8,$9)
+			VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,'')::inet,$7,$8,$9)
 			RETURNING `+hostCols,
 			in.Hostname, in.Description, in.Environment, in.Owner, in.Address, in.WGAddress,
 			in.SSHPort, in.SSHUser, in.Tags)
@@ -176,7 +176,7 @@ func (s *Store) UpdateHost(ctx context.Context, id uuid.UUID, in HostInput) (*mo
 	}
 	row := s.pool.QueryRow(ctx, `
 		UPDATE hosts SET hostname=$2, description=$3, environment=$4, owner=$5,
-			address=NULLIF($6,'')::inet, wg_address=NULLIF($7,'')::inet, ssh_port=$8, ssh_user=$9,
+			address=NULLIF($6,''), wg_address=NULLIF($7,'')::inet, ssh_port=$8, ssh_user=$9,
 			tags=$10, updated_at=now()
 		WHERE id=$1 RETURNING `+hostCols,
 		id, in.Hostname, in.Description, in.Environment, in.Owner, in.Address, in.WGAddress,

@@ -125,6 +125,48 @@ func (g *Gateway) DialDirectPassword(ctx context.Context, addr string, port int,
 	return ssh.NewClient(ncc, chans, reqs), nil
 }
 
+// DialPasswordViaJump bootstraps a host *through the jump host*: it connects to
+// the jump host with the session certificate, opens a tunnel to host:port, then
+// authenticates to the host with a password. Use this when the backend cannot
+// reach the host directly but the jump host can (the host is on the jump's LAN).
+func (g *Gateway) DialPasswordViaJump(ctx context.Context, sessionID, host string, port int, user, password string) (*Conn, error) {
+	cred, ok := g.vaultLookup(sessionID)
+	if !ok {
+		return nil, fmt.Errorf("no live credential for session")
+	}
+	signer := cred.CertSigner()
+	if signer == nil {
+		return nil, fmt.Errorf("session credential unavailable")
+	}
+	jumpClient, err := ssh.Dial("tcp", g.cfg.JumpHost, &ssh.ClientConfig{
+		User:            g.cfg.JumpUser,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dial jump host: %w", err)
+	}
+	target := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	tunnel, err := jumpClient.DialContext(ctx, "tcp", target)
+	if err != nil {
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("tunnel to %s via jump: %w", target, err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(tunnel, target, &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.Password(password)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	})
+	if err != nil {
+		_ = tunnel.Close()
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("ssh password auth to %s via jump: %w", target, err)
+	}
+	return &Conn{Client: ssh.NewClient(ncc, chans, reqs), jump: jumpClient}, nil
+}
+
 // DialWithSigner connects to host:port through the jump host using an explicit
 // certificate signer (e.g. the monitor's system identity) rather than a session
 // credential from the vault.

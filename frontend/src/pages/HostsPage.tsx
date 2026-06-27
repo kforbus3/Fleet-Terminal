@@ -21,7 +21,7 @@ import {
   type EnrollmentResult, type EnrollParams, type Host, type HostInput,
 } from "../api/hosts";
 import {
-  FormControl, FormControlLabel, FormLabel, Radio, RadioGroup,
+  Checkbox, FormControl, FormControlLabel, FormLabel, Radio, RadioGroup,
 } from "@mui/material";
 
 const STATUS_COLOR: Record<string, "success" | "error" | "warning" | "default"> = {
@@ -382,6 +382,7 @@ function EnrollCredsDialog({
   const [method, setMethod] = useState<"password" | "trusted">("password");
   const [bootstrapUser, setBootstrapUser] = useState("root");
   const [password, setPassword] = useState("");
+  const [viaJump, setViaJump] = useState(false);
 
   return (
     <Dialog open={Boolean(host)} onClose={onClose} fullWidth maxWidth="sm">
@@ -418,13 +419,18 @@ function EnrollCredsDialog({
             />
           </Stack>
         )}
+        <FormControlLabel
+          sx={{ mt: 1 }}
+          control={<Checkbox checked={viaJump} onChange={(e) => setViaJump(e.target.checked)} />}
+          label="Reach this host through the jump host (backend can't reach it directly)"
+        />
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button
           variant="contained"
           disabled={method === "password" && password === ""}
-          onClick={() => onSubmit({ method, bootstrapUser, password })}
+          onClick={() => onSubmit({ method, bootstrapUser, password, viaJump })}
         >
           Enroll
         </Button>

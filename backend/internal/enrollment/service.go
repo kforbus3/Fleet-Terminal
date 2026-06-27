@@ -50,9 +50,12 @@ type EnrollParams struct {
 	// Method is "password" to bootstrap a host that does not yet trust the Fleet
 	// CA (installs trust + WireGuard over an SSH password), or "trusted" to use
 	// the caller's session certificate on a host that already trusts the CA.
-	Method       string
+	Method        string
 	BootstrapUser string
 	Password      string
+	// ViaJump routes the bootstrap SSH connection through the jump host instead
+	// of connecting directly from the backend.
+	ViaJump bool
 }
 
 func (p EnrollParams) method() string {
@@ -105,12 +108,19 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	jumpPub = strings.TrimSpace(jumpPub)
 	step("connect_jump_host", "ok", "jump WG pubkey "+short(jumpPub))
 
-	// 2) Connect to the host for bootstrap. With "password" we authenticate with
-	//    a bootstrap credential (the host need not trust the CA yet); with
-	//    "trusted" we use the session certificate on an already-trusted host.
+	// 2) Connect to the host for bootstrap. With "password" we authenticate with a
+	//    bootstrap credential (the host need not trust the CA yet); with "trusted"
+	//    we use the session certificate. The connection is either direct from the
+	//    backend, or routed *through the jump host* (when the backend cannot reach
+	//    the host directly but the jump host can).
 	var hostClient *ssh.Client
+	var hostClose func()
 	var isRoot bool
 	var sudoPass string
+	via := "direct"
+	if params.ViaJump {
+		via = "via jump host"
+	}
 	if params.method() == "password" {
 		buser := params.BootstrapUser
 		if buser == "" {
@@ -120,19 +130,37 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		if !isRoot {
 			sudoPass = params.Password
 		}
-		hostClient, err = s.gw.DialDirectPassword(ctx, mgmtAddr, host.SSHPort, buser, params.Password)
-		if err != nil {
-			return fail("connect_host", err)
+		if params.ViaJump {
+			conn, derr := s.gw.DialPasswordViaJump(ctx, sessionID.String(), mgmtAddr, host.SSHPort, buser, params.Password)
+			if derr != nil {
+				return fail("connect_host", derr)
+			}
+			hostClient, hostClose = conn.Client, conn.Close
+		} else {
+			hostClient, err = s.gw.DialDirectPassword(ctx, mgmtAddr, host.SSHPort, buser, params.Password)
+			if err != nil {
+				return fail("connect_host", err)
+			}
+			hostClose = func() { _ = hostClient.Close() }
 		}
-		step("connect_host", "ok", "ssh password auth as "+buser+"@"+mgmtAddr)
+		step("connect_host", "ok", fmt.Sprintf("ssh password auth as %s@%s (%s)", buser, mgmtAddr, via))
 	} else {
-		hostClient, err = s.gw.DialDirect(ctx, sessionID.String(), mgmtAddr, host.SSHPort, loginUser)
-		if err != nil {
-			return fail("connect_host", err)
+		if params.ViaJump {
+			conn, derr := s.gw.Dial(ctx, sessionID.String(), mgmtAddr, host.SSHPort, loginUser)
+			if derr != nil {
+				return fail("connect_host", derr)
+			}
+			hostClient, hostClose = conn.Client, conn.Close
+		} else {
+			hostClient, err = s.gw.DialDirect(ctx, sessionID.String(), mgmtAddr, host.SSHPort, loginUser)
+			if err != nil {
+				return fail("connect_host", err)
+			}
+			hostClose = func() { _ = hostClient.Close() }
 		}
-		step("connect_host", "ok", "ssh certificate auth to "+mgmtAddr)
+		step("connect_host", "ok", fmt.Sprintf("ssh certificate auth to %s (%s)", mgmtAddr, via))
 	}
-	defer hostClient.Close()
+	defer hostClose()
 
 	// Privileged command runner: root runs directly; otherwise via sudo (with the
 	// bootstrap password piped to sudo -S when one was provided).
