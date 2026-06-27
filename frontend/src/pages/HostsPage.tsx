@@ -333,6 +333,14 @@ export function HostsPage() {
           pageSizeOptions={[10, 25, 50, 100]}
           initialState={{
             pagination: { paginationModel: { pageSize: 25, page: 0 } },
+            // Keep the default view simple: the essentials for finding a host and
+            // connecting. The rest are one click away in the column menu.
+            columns: {
+              columnVisibilityModel: {
+                owner: false, wgAddress: false, sshVersion: false,
+                latency: false, groups: false,
+              },
+            },
           }}
           getRowHeight={() => "auto"}
           slots={{ toolbar: HostsToolbar }}
