@@ -124,6 +124,8 @@ export interface EnrollParams {
   method: "password" | "trusted";
   bootstrapUser?: string;
   password?: string;
+  // sudo password, when the bootstrap user has password-required sudo.
+  sudoPassword?: string;
   // Route the bootstrap SSH connection through the jump host (for hosts the
   // backend can't reach directly but the jump host can).
   viaJump?: boolean;

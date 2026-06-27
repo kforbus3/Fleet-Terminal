@@ -53,6 +53,10 @@ type EnrollParams struct {
 	Method        string
 	BootstrapUser string
 	Password      string
+	// SudoPassword is the password for `sudo` when the bootstrap user has
+	// password-required sudo. If empty, the SSH password is reused (password
+	// method) or passwordless sudo is assumed (trusted method).
+	SudoPassword string
 	// ViaJump routes the bootstrap SSH connection through the jump host instead
 	// of connecting directly from the backend.
 	ViaJump bool
@@ -128,7 +132,10 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		}
 		isRoot = buser == "root"
 		if !isRoot {
-			sudoPass = params.Password
+			sudoPass = params.SudoPassword
+			if sudoPass == "" {
+				sudoPass = params.Password // reuse SSH password for sudo by default
+			}
 		}
 		if params.ViaJump {
 			conn, derr := s.gw.DialPasswordViaJump(ctx, sessionID.String(), mgmtAddr, host.SSHPort, buser, params.Password)
@@ -145,6 +152,8 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		}
 		step("connect_host", "ok", fmt.Sprintf("ssh password auth as %s@%s (%s)", buser, mgmtAddr, via))
 	} else {
+		// Certificate auth has no SSH password, but sudo may still require one.
+		sudoPass = params.SudoPassword
 		if params.ViaJump {
 			conn, derr := s.gw.Dial(ctx, sessionID.String(), mgmtAddr, host.SSHPort, loginUser)
 			if derr != nil {
@@ -224,7 +233,13 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	if hostPub == "" {
 		return fail("configure_host_wireguard", fmt.Errorf("host public key not produced: %s", oneLine(out)))
 	}
-	step("configure_host_wireguard", "ok", fmt.Sprintf("wg0=%s pub=%s", wgIP, short(hostPub)))
+	wgAddr := parseKV(out, "WGADDR")
+	if wgAddr == "" {
+		return fail("configure_host_wireguard",
+			fmt.Errorf("wireguard interface did not come up: %s", oneLine(out)))
+	}
+	step("configure_host_wireguard", "ok",
+		fmt.Sprintf("%s up (addr %s) pub=%s", s.cfg.WGInterface, wgAddr, short(hostPub)))
 
 	// 8) Add the host as a peer on the jump host (the VPN server).
 	hostEndpoint := fmt.Sprintf("%s:%d", mgmtAddr, s.cfg.WGPort)
@@ -278,8 +293,11 @@ func (s *Service) validateCertLogin(ctx context.Context, sessionID uuid.UUID, wg
 	return "", fmt.Errorf("certificate login not reachable yet")
 }
 
-// hostWGScript renders the script that configures WireGuard on the managed host.
-// The private key is generated on the host and never transmitted.
+// hostWGScript renders the script that configures and STARTS WireGuard on the
+// managed host. It writes a wg-quick config and brings the interface up with
+// wg-quick (kernel module, with a userspace wireguard-go fallback), enables it
+// on boot, and reports the resulting interface state. The private key is
+// generated on the host and never transmitted.
 func (s *Service) hostWGScript(wgIP, jumpPub string) string {
 	iface := s.cfg.WGInterface
 	return fmt.Sprintf(`set -e
@@ -288,15 +306,6 @@ mkdir -p /etc/wireguard; umask 077
 [ -f /etc/wireguard/$IF.key ] || wg genkey > /etc/wireguard/$IF.key
 PRIV=$(cat /etc/wireguard/$IF.key)
 PUB=$(printf '%%s' "$PRIV" | wg pubkey)
-if ! ip link show $IF >/dev/null 2>&1; then
-  ip link add dev $IF type wireguard 2>/dev/null || { command -v wireguard-go >/dev/null 2>&1 && wireguard-go $IF; sleep 1; }
-fi
-ip link show $IF >/dev/null 2>&1 || { echo "no wireguard interface available"; exit 1; }
-printf '%%s' "$PRIV" | wg set $IF private-key /dev/stdin listen-port $PORT
-wg set $IF peer "$JPUB" endpoint "$JEP" allowed-ips $SUBNET persistent-keepalive 25
-ip addr flush dev $IF 2>/dev/null || true
-ip addr add $IP/24 dev $IF
-ip link set $IF up
 cat > /etc/wireguard/$IF.conf <<EOF
 [Interface]
 Address = $IP/24
@@ -308,6 +317,39 @@ Endpoint = $JEP
 AllowedIPs = $SUBNET
 PersistentKeepalive = 25
 EOF
+chmod 600 /etc/wireguard/$IF.conf
+
+# Bring the interface UP. Prefer wg-quick (standard; sets address + routes and
+# brings it up). Use wireguard-go for the userspace fallback when there is no
+# kernel module (containers / restricted kernels).
+export WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
+UP=no
+if command -v wg-quick >/dev/null 2>&1; then
+  wg-quick down $IF >/dev/null 2>&1 || true
+  if wg-quick up $IF >/dev/null 2>&1; then
+    UP=yes
+    (systemctl enable wg-quick@$IF >/dev/null 2>&1) || true
+  fi
+fi
+if [ "$UP" != yes ]; then
+  ip link del $IF >/dev/null 2>&1 || true
+  if ! ip link add dev $IF type wireguard >/dev/null 2>&1; then
+    command -v wireguard-go >/dev/null 2>&1 && wireguard-go $IF && sleep 1
+  fi
+  ip link show $IF >/dev/null 2>&1 || { echo "ERROR no wireguard interface available"; exit 1; }
+  printf '%%s' "$PRIV" | wg set $IF private-key /dev/stdin listen-port $PORT
+  wg set $IF peer "$JPUB" endpoint "$JEP" allowed-ips $SUBNET persistent-keepalive 25
+  ip address add $IP/24 dev $IF 2>/dev/null || true
+  ip link set $IF up
+fi
+sleep 1
+# WireGuard interfaces report operational state UNKNOWN even when up.
+ip link show $IF >/dev/null 2>&1 || { echo "ERROR interface not present after bring-up"; exit 1; }
+ip link set $IF up 2>/dev/null || true
+WGSTATE=$(ip -br link show $IF 2>/dev/null | awk '{print $2}')
+WGADDR=$(ip -br addr show $IF 2>/dev/null | awk '{print $3}')
+echo "WGSTATE=$WGSTATE"
+echo "WGADDR=$WGADDR"
 echo "HOSTPUB=$PUB"`,
 		iface, wgIP, s.cfg.WGSubnet, jumpPub, s.cfg.WGJumpEndpoint, s.cfg.WGPort)
 }

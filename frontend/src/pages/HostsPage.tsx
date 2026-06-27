@@ -394,6 +394,7 @@ function EnrollCredsDialog({
   const [method, setMethod] = useState<"password" | "trusted">("password");
   const [bootstrapUser, setBootstrapUser] = useState("root");
   const [password, setPassword] = useState("");
+  const [sudoPassword, setSudoPassword] = useState("");
   const [viaJump, setViaJump] = useState(false);
 
   return (
@@ -429,6 +430,11 @@ function EnrollCredsDialog({
               onChange={(e) => setPassword(e.target.value)} autoFocus
               helperText="Used once to bootstrap trust; never stored"
             />
+            <TextField
+              label="Sudo password (optional)" type="password" value={sudoPassword}
+              onChange={(e) => setSudoPassword(e.target.value)}
+              helperText="Only if this user's sudo requires a password different from the SSH password"
+            />
           </Stack>
         )}
         <FormControlLabel
@@ -442,7 +448,7 @@ function EnrollCredsDialog({
         <Button
           variant="contained"
           disabled={method === "password" && password === ""}
-          onClick={() => onSubmit({ method, bootstrapUser, password, viaJump })}
+          onClick={() => onSubmit({ method, bootstrapUser, password, sudoPassword, viaJump })}
         >
           Enroll
         </Button>
