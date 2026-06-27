@@ -34,6 +34,7 @@ func (h *Handler) Mount(r chi.Router) {
 		pr.Post("/auth/mfa/totp/confirm", h.mfaConfirm)
 		pr.Delete("/auth/mfa/{id}", h.mfaDelete)
 	})
+	h.mountWebAuthn(r)
 }
 
 type loginReq struct {

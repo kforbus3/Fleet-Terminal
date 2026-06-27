@@ -87,7 +87,7 @@ scripts/    orchestration + dev helpers
 
 Working and verified end-to-end (see `git log` for the milestone history):
 
-- Auth (Argon2id, JWT + rotating refresh, CSRF, lockout), **TOTP MFA**, first-run bootstrap
+- Auth (Argon2id, JWT + rotating refresh, CSRF, lockout), **MFA (TOTP + WebAuthn passkeys)**, first-run bootstrap
 - RBAC + host groups + **just-in-time approvals** with auto-expiry
 - Host inventory + **automated WireGuard enrollment** (provisions the jump-host peer and the
   host interface over SSH; specify a WG address or auto-assign from the pool)
@@ -100,7 +100,7 @@ Working and verified end-to-end (see `git log` for the milestone history):
 - Admin suite (users/roles/groups/settings), Prometheus metrics, health/ready
 - Docker Compose + local SSH test fabric; K8s manifests, Helm chart, systemd units
 
-Documented for incremental deepening: WebAuthn/passkeys MFA, distributed tracing, SAML/OIDC plugins.
+Documented for incremental deepening: distributed tracing (OTel), SAML/OIDC plugins.
 
 See [docs/operations.md](docs/operations.md) for day-to-day flows (enroll, connect, transfer, MFA).
 

@@ -6,6 +6,7 @@ import {
 import DeleteIcon from "@mui/icons-material/Delete";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { mfaConfirm, mfaDelete, mfaEnroll, mfaList } from "../api/auth";
+import { registerPasskey, webauthnSupported } from "../api/webauthn";
 
 // Per-user security settings: enroll and manage TOTP two-factor authentication.
 export function SecurityPage() {
@@ -30,6 +31,10 @@ export function SecurityPage() {
   });
   const deleteMut = useMutation({
     mutationFn: mfaDelete,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["mfa"] }),
+  });
+  const passkeyMut = useMutation({
+    mutationFn: registerPasskey,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["mfa"] }),
   });
 
@@ -106,6 +111,33 @@ export function SecurityPage() {
               </Stack>
             </>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent>
+          <Stack direction="row" alignItems="center" justifyContent="space-between">
+            <Typography variant="h6">Passkeys (WebAuthn)</Typography>
+            <Chip
+              size="small"
+              label={(methods ?? []).some((m) => m.kind === "webauthn") ? "Registered" : "None"}
+              color={(methods ?? []).some((m) => m.kind === "webauthn") ? "success" : "default"}
+            />
+          </Stack>
+          <Typography color="text.secondary" variant="body2" sx={{ mt: 1, mb: 2 }}>
+            Use a hardware security key, Touch ID/Windows Hello, or a phone passkey as a
+            phishing-resistant second factor.
+          </Typography>
+          {passkeyMut.isError && (
+            <Alert severity="error" sx={{ mb: 2 }}>Passkey registration failed or was cancelled.</Alert>
+          )}
+          <Button
+            variant="contained"
+            disabled={!webauthnSupported() || passkeyMut.isPending}
+            onClick={() => passkeyMut.mutate()}
+          >
+            {webauthnSupported() ? "Register a passkey" : "Not supported in this browser"}
+          </Button>
         </CardContent>
       </Card>
     </Box>

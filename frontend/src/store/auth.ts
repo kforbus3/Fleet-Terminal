@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { setAccessToken } from "../api/client";
 import * as authApi from "../api/auth";
 import type { User } from "../api/auth";
+import { authenticatePasskey } from "../api/webauthn";
 
 interface AuthState {
   user: User | null;
@@ -13,6 +14,7 @@ interface AuthState {
   // otherwise the session is established.
   login: (username: string, password: string) => Promise<{ mfaRequired?: boolean; challenge?: string }>;
   verifyMfa: (challenge: string, code: string) => Promise<void>;
+  verifyPasskey: (challenge: string) => Promise<void>;
   logout: () => Promise<void>;
   loadMe: () => Promise<void>;
   has: (perm: string) => boolean;
@@ -41,6 +43,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   verifyMfa: async (challenge, code) => {
     const res = await authApi.mfaVerify(challenge, code);
+    setAccessToken(res.accessToken ?? null);
+    set({ user: res.user ?? null, accessToken: res.accessToken ?? null });
+    await get().loadMe();
+  },
+
+  verifyPasskey: async (challenge) => {
+    const res = await authenticatePasskey(challenge);
     setAccessToken(res.accessToken ?? null);
     set({ user: res.user ?? null, accessToken: res.accessToken ?? null });
     await get().loadMe();

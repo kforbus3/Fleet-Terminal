@@ -37,6 +37,11 @@ type Config struct {
 	CookieSecure      bool
 	CSRFSecret        []byte
 
+	// WebAuthn / passkeys relying-party settings
+	WebAuthnRPID     string   // relying party id (registrable domain), e.g. "localhost"
+	WebAuthnRPName   string   // human-readable RP name
+	WebAuthnOrigins  []string // allowed origins, e.g. http://localhost:5173
+
 	// SSH Certificate Authority
 	CAKeyPassphrase []byte        // encrypts CA private key at rest
 	UserCertTTL     time.Duration // ephemeral user certificate lifetime (7d)
@@ -110,6 +115,15 @@ func Load() (*Config, error) {
 	c.CSRFSecret = []byte(env("FLEET_CSRF_SECRET", ""))
 	c.CAKeyPassphrase = []byte(env("FLEET_CA_PASSPHRASE", ""))
 
+	// WebAuthn: derive sensible localhost defaults from the public URL.
+	c.WebAuthnRPID = env("FLEET_WEBAUTHN_RPID", hostOnly(c.PublicURL))
+	c.WebAuthnRPName = env("FLEET_WEBAUTHN_RP_NAME", "Fleet Terminal")
+	if origins := env("FLEET_WEBAUTHN_ORIGINS", ""); origins != "" {
+		c.WebAuthnOrigins = strings.Split(origins, ",")
+	} else {
+		c.WebAuthnOrigins = []string{c.PublicURL, "http://localhost:5173", "http://localhost:8080"}
+	}
+
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -150,6 +164,19 @@ func (c *Config) validate() error {
 
 // IsProduction reports whether the app runs in production mode.
 func (c *Config) IsProduction() bool { return c.Environment == "production" }
+
+// hostOnly extracts the bare host from a URL (no scheme, no port), used as the
+// default WebAuthn relying-party id.
+func hostOnly(u string) string {
+	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+	if i := strings.IndexAny(u, ":/"); i >= 0 {
+		u = u[:i]
+	}
+	if u == "" {
+		return "localhost"
+	}
+	return u
+}
 
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {

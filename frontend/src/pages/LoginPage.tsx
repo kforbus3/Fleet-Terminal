@@ -6,6 +6,7 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { bootstrapStatus } from "../api/auth";
+import { webauthnSupported } from "../api/webauthn";
 
 // Credentials login form. On success the auth store holds the access token and
 // principal; we then route to the dashboard. On first run (no users yet) we send
@@ -14,6 +15,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
   const verifyMfa = useAuthStore((s) => s.verifyMfa);
+  const verifyPasskey = useAuthStore((s) => s.verifyPasskey);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +121,25 @@ export function LoginPage() {
               >
                 {submitting ? "Please wait…" : challenge ? "Verify" : "Sign in"}
               </Button>
+              {challenge && webauthnSupported() && (
+                <Button
+                  variant="outlined"
+                  onClick={async () => {
+                    setError(null);
+                    setSubmitting(true);
+                    try {
+                      await verifyPasskey(challenge);
+                      navigate("/", { replace: true });
+                    } catch {
+                      setError("Passkey verification failed or was cancelled.");
+                    } finally {
+                      setSubmitting(false);
+                    }
+                  }}
+                >
+                  Use a passkey instead
+                </Button>
+              )}
             </Stack>
           </Box>
         </CardContent>

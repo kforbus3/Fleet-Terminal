@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
 	"github.com/fleet-terminal/backend/internal/config"
@@ -35,6 +37,12 @@ type Service struct {
 
 	onSessionCreated   SessionHook
 	onSessionDestroyed SessionHook
+
+	// WebAuthn relying-party instance (lazily initialized) + ceremony sessions.
+	waOnce  sync.Once
+	wa      *webauthn.WebAuthn
+	waErr   error
+	waStore waStore
 }
 
 // SetSessionHooks registers identity lifecycle callbacks.
