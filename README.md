@@ -89,8 +89,10 @@ Working and verified end-to-end (see `git log` for the milestone history):
 
 - Auth (Argon2id, JWT + rotating refresh, CSRF, lockout), **MFA (TOTP + WebAuthn passkeys)**, first-run bootstrap
 - RBAC + host groups + **just-in-time approvals** with auto-expiry
-- Host inventory + **automated WireGuard enrollment** (provisions the jump-host peer and the
-  host interface over SSH; specify a WG address or auto-assign from the pool)
+- Host inventory + **one-click bootstrap enrollment of bare hosts**: over an SSH password,
+  installs the CA trust + login user + sshd config, **installs WireGuard**, joins the host to
+  the overlay, and verifies per-user certificate login (or cert-based re-provision for hosts
+  that already trust the CA; specify a WG address or auto-assign from the pool)
 - Internal SSH **CA + ephemeral per-login certificates** (in-RAM keys, 7-day, auto-renew, revoke)
 - Backend-only **browser SSH terminal** (xterm.js) through jump host + WireGuard
 - **Session recording** (asciicast v2) + replay
