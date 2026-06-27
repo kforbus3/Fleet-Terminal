@@ -37,10 +37,11 @@ Browser ──HTTPS/WS──> React SPA ──REST/WS──> Go Backend ──SS
 | Area | Capability |
 |------|-----------|
 | Access | Browser SSH terminal (xterm.js), multi-tab, full PTY, session recording & replay |
-| Identity | Self-contained auth, Argon2id, optional MFA seams (TOTP/WebAuthn), first-run bootstrap wizard |
-| AuthZ | RBAC (built-in + custom roles), host groups, just-in-time temporary access with auto-expiry |
-| Hosts | Inventory dashboard, live SSH-based health monitoring, automated enrollment (planned automation) |
-| CA | Ephemeral user certs, CA rotation, revocation, lifecycle API |
+| Identity | Self-contained auth, Argon2id, MFA (TOTP + WebAuthn passkeys) — optional or **enforced** globally/per-user, first-run bootstrap wizard |
+| AuthZ | RBAC (built-in + custom roles), host groups **and direct user→host grants**, just-in-time temporary access with auto-expiry |
+| Hosts | Inventory + **quick-connect Terminals launcher**, live SSH health monitoring, automated enrollment (password / private key / **SSH agent** / **no-install ssh-pipe**) |
+| CA | **Unique ephemeral cert per (user, host)**, CA rotation, revocation, lifecycle API |
+| Hardening | Per-IP rate limiting, idle/absolute session reaper, live-session termination, internet-exposure guide |
 | Audit | Hash-chained audit with integrity verification + export; full auth event log |
 | Ops | Prometheus metrics, structured logs, health/ready endpoints, Docker/K8s/Helm/systemd artifacts |
 
@@ -78,8 +79,8 @@ scripts/    orchestration + dev helpers
 ## Architecture & docs
 
 - [docs/architecture.md](docs/architecture.md) — components, data flows, security model
-- [docs/api.md](docs/api.md) — REST API reference
-- [docs/database.md](docs/database.md) — schema reference
+- [docs/deployment.md](docs/deployment.md) — deploy the whole system · [docs/internet-exposure.md](docs/internet-exposure.md) — internet-facing
+- [docs/api.md](docs/api.md) — REST API reference · [docs/database.md](docs/database.md) — schema reference
 - [docs/security-guide.md](docs/security-guide.md) · [docs/certificate-lifecycle.md](docs/certificate-lifecycle.md)
 - [docs/admin-guide.md](docs/admin-guide.md) · [docs/user-guide.md](docs/user-guide.md) · [docs/host-enrollment-guide.md](docs/host-enrollment-guide.md)
 
@@ -87,24 +88,28 @@ scripts/    orchestration + dev helpers
 
 Working and verified end-to-end (see `git log` for the milestone history):
 
-- Auth (Argon2id, JWT + rotating refresh, CSRF, lockout), **MFA (TOTP + WebAuthn passkeys)**, first-run bootstrap
-- RBAC + host groups + **just-in-time approvals** with auto-expiry
-- Host inventory + **one-click bootstrap enrollment of bare hosts**: over an SSH password,
-  installs the CA trust + login user + sshd config, **installs WireGuard**, joins the host to
-  the overlay, and verifies per-user certificate login (or cert-based re-provision for hosts
-  that already trust the CA; specify a WG address or auto-assign from the pool)
-- Internal SSH **CA + ephemeral per-login certificates** (in-RAM keys, 7-day, auto-renew, revoke)
+- Auth (Argon2id, JWT + rotating refresh, CSRF, lockout), **MFA (TOTP + WebAuthn passkeys),
+  optional or enforced** globally/per-user, first-run bootstrap
+- RBAC + host groups + **direct user→host grants** + **just-in-time approvals** with auto-expiry
+- Host inventory + **quick-connect Terminals launcher**; **enroll hosts four ways** — SSH
+  password, SSH private key, **forwarded SSH agent** (key stays local), or a **no-install
+  ssh-pipe** script — each installs CA trust + WireGuard and verifies per-user cert login
+- Internal SSH **CA + ephemeral certificates, unique per (user, host)** (in-RAM keys, 7-day,
+  auto-renew, revoke via distributed KRL)
 - Backend-only **browser SSH terminal** (xterm.js) through jump host + WireGuard
-- **Session recording** (asciicast v2) + replay
+- **Session recording** (asciicast v2) + replay + offline export
 - **Live host monitoring** (authenticated SSH health checks, no ICMP) with WebSocket push
-- **Audited SFTP** file transfer (browse/upload/download/drag-and-drop)
+- **Audited SFTP** file transfer (browse/upload/download/drag-and-drop, progress, cancel)
+- **Hardening for internet exposure:** per-IP rate limiting, idle/absolute session reaper,
+  live-session termination on revoke, hardened production config + reverse-proxy guide
 - Hash-chained **tamper-evident audit** with integrity verification
 - Admin suite (users/roles/groups/settings), Prometheus metrics, health/ready
 - Docker Compose + local SSH test fabric; K8s manifests, Helm chart, systemd units
 
 Documented for incremental deepening: distributed tracing (OTel), SAML/OIDC plugins.
 
-See [docs/operations.md](docs/operations.md) for day-to-day flows (enroll, connect, transfer, MFA).
+See [docs/deployment.md](docs/deployment.md) to deploy and [docs/operations.md](docs/operations.md)
+for day-to-day flows (enroll, connect, transfer, MFA).
 
 ## License
 

@@ -21,13 +21,16 @@ Day-to-day operator flows for Fleet Terminal. Assumes the stack is up via `make 
    - **WireGuard Address** — leave blank to **auto-assign** the next free overlay address, or
      type a specific one (validated to be in the overlay subnet and not already used)
    - **SSH user** — `fleet` for the test fabric
-2. Click the **Enroll** (cable) icon on the host row and choose how to reach the host:
-   - **SSH password** — for a brand-new/existing host with *no prior setup*. Provide an SSH
-     user (root or a sudoer) + password. Enrollment installs the CA trust, creates the login
-     user, configures + reloads sshd, **installs WireGuard**, brings up the tunnel, and
-     validates per-user certificate login. The password is used once and never stored.
-   - **Already trusts the Fleet CA** — re-provision a host that was previously enrolled, using
-     the session certificate.
+2. Click the **Enroll** (cable) icon on the host row and choose how to reach the host for the
+   one-time bootstrap (all install CA trust + WireGuard; full detail in the
+   [Host Enrollment Guide](./host-enrollment-guide.md)):
+   - **SSH password** — brand-new/existing host with no prior setup (root or a sudoer + password).
+   - **SSH private key** — host with password auth disabled; paste a key already in `authorized_keys`.
+   - **SSH agent** — run the `fleet-enroll-agent` bridge from your laptop; the key never leaves it.
+   - **No install (ssh-pipe)** — run a one-liner in your own terminal (`curl … | ssh host sudo bash`),
+     then paste the printed host public key into the Finish step. No install, no key upload.
+   - **Already trusts the Fleet CA** — re-provision a previously-enrolled host with the session cert.
+   The password / pasted key is used once and never stored.
 3. Enrollment, over SSH:
    - reads the jump host's WireGuard key,
    - (password bootstrap) installs `/etc/ssh/fleet_ca.pub`, the login user + sudo + principal
@@ -43,12 +46,25 @@ Day-to-day operator flows for Fleet Terminal. Assumes the stack is up via `make 
 > WireGuard address pool and endpoints are configured via `FLEET_WG_SUBNET`,
 > `FLEET_WG_JUMP_IP`, `FLEET_WG_JUMP_ENDPOINT`, and `FLEET_WG_PORT`.
 
+## Granting host access
+
+Users have no host access by default. Grant it via the host row's **Manage access** (lock)
+icon:
+
+- **Groups** — add the host to a group; any member of that group can reach it.
+- **Individual users** — grant a single user direct access to this host.
+
+Review access at a glance: **Manage access** lists a host's groups + direct users, and a
+user's **View accessible hosts** action (Users page) lists every host they can reach. Users
+without standing access can request **Just-in-time** access (below).
+
 ## Connecting a terminal
 
-Click the **terminal** icon on a host row (or navigate to `/terminals/<hostId>`). The browser
-opens a WebSocket to the backend, which is the only SSH client; it dials the host through the
-jump host using your session's ephemeral certificate. The session is recorded (replay under
-**Session Replay**) and audited.
+Use the **Terminals** page for a quick-connect launcher: search your accessible hosts and click
+**Terminal** (or **Files**). You can also click the **terminal** icon on a host row, or navigate
+to `/terminals/<hostId>`. The browser opens a WebSocket to the backend — the only SSH client —
+which dials the host through the jump host using a **certificate unique to that (user, host)
+pair**. The session is recorded (replay under **Session Replay**) and audited.
 
 ## Transferring files (SFTP)
 
@@ -62,12 +78,18 @@ The monitor runs authenticated SSH health checks (no ICMP) against enrolled host
 updating status (online/offline/unknown), latency, uptime, and WireGuard handshake freshness.
 The dashboard subscribes to a WebSocket and updates in real time.
 
-## Two-factor authentication (TOTP)
+## Two-factor authentication (TOTP / passkeys)
 
 1. **Security → Set up authenticator**. Add the shown secret / `otpauth` URL to an authenticator
    app (the secret is displayed only once), then enter the current 6-digit code to confirm.
+   Passkeys (WebAuthn) can be registered from the same page.
 2. Subsequent sign-ins prompt for the code after the password step.
 3. Remove a factor from the same page. (Admins can reset a locked-out user's factors.)
+
+**Requiring MFA.** MFA is optional by default. Admins can enforce it globally
+(**Users → Require MFA for all**) or per user (Users → Edit → *Require MFA*). When required and
+a user has no factor, their next sign-in walks them through enrollment before any session is
+issued — no separate setup step needed.
 
 ## Just-in-time access
 

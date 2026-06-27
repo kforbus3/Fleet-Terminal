@@ -94,23 +94,34 @@ endpoints are under `/api/v1/users`, `/roles`, `/groups`.)
   to force a change at next login).
 - **Assign roles / groups:** `POST /users/{id}/roles/{roleId}` and
   `POST /users/{id}/groups/{groupId}` (and the matching `DELETE`s).
+- **Require MFA (per user):** `POST /users/{id}/require-mfa` `{"require": true}` —
+  forces TOTP enrollment at the user's next sign-in before a session is issued.
+- **View accessible hosts:** `GET /users/{id}/hosts` lists every host a user can
+  currently reach (the at-a-glance access view).
 
 ## 5. Manage roles & groups
 
 - **Roles:** `POST /roles`, `DELETE /roles/{id}` (built-in roles are protected),
   `PUT /roles/{id}/permissions` with `{"permissions": ["Host.View", …]}`.
 - **Permissions catalog:** `GET /permissions`.
-- **Groups:** `POST /groups`, `DELETE /groups/{id}`. **Group membership is how
-  host access is granted** — a user can connect to a host when they share a group
-  with it (or hold a temporary grant). Add hosts to groups via
-  `POST /hosts/{id}/groups/{groupId}`.
+- **Groups:** `POST /groups`, `DELETE /groups/{id}`. Group membership is one way
+  host access is granted — a user can connect to a host when they share a group
+  with it. Add hosts to groups via `POST /hosts/{id}/groups/{groupId}`.
 
-## 6. Manage hosts
+## 6. Manage hosts & access
 
 Add hosts to the inventory (`POST /hosts`, requires `Host.Enroll`), then enroll
 them so they trust the Fleet user CA — see the
-[Host Enrollment Guide](./host-enrollment-guide.md). Authorize users by placing
-hosts and users in shared groups.
+[Host Enrollment Guide](./host-enrollment-guide.md).
+
+**Authorize users** (no host is reachable by default). A user can reach a host via:
+
+- a **shared group** (above), or
+- a **direct grant** — `POST /hosts/{id}/users/{userId}` (host's *Manage access*
+  dialog → *Individual users*), or
+- a **just-in-time** approval grant.
+
+`GET /hosts/{id}/access` returns a host's groups + directly-granted users.
 
 `GET /hosts/stats/status` returns live counts (online / offline / unknown) for
 dashboards.
@@ -124,6 +135,11 @@ dashboards.
 | `password_policy` | min 12, upper/lower/digit/symbol, history 5 | password complexity + reuse |
 | `lockout_policy` | max 5 failed, 15 min lockout | account lockout |
 | `session_policy` | idle 30 min, absolute 12 h | session lifetime |
+| `require_mfa` | `{"enabled": false}` | when on, **all** users must enroll a second factor (Users → *Require MFA for all*) |
+
+Per-IP rate limits and session/cert TTLs are environment variables
+(`FLEET_RATE_LIMIT_*`, `FLEET_SESSION_*`, `FLEET_*_TTL`) — see
+[deployment.md](./deployment.md).
 
 ## 8. Audit & monitoring
 

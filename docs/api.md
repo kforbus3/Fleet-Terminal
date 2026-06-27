@@ -72,9 +72,13 @@ Returns `409` once any user exists, `400` on weak password.
 |--------|------|---------------------|
 | POST | `/api/v1/auth/login` | none |
 | POST | `/api/v1/auth/refresh` | none (uses refresh cookie) |
+| POST | `/api/v1/auth/mfa/verify` | none (uses challenge) |
+| POST | `/api/v1/auth/mfa/setup/begin` | none (uses setup token) |
+| POST | `/api/v1/auth/mfa/setup/confirm` | none (uses setup token) |
 | POST | `/api/v1/auth/logout` | authenticated |
 | GET | `/api/v1/auth/me` | authenticated |
 | POST | `/api/v1/auth/change-password` | authenticated |
+| GET/POST | `/api/v1/auth/mfa[/totp/...]` | authenticated |
 
 **`POST /auth/login`**
 ```json
@@ -86,6 +90,13 @@ Returns `409` once any user exists, `400` on weak password.
   "csrfToken": "…", "user": { "id": "…", "username": "admin", "roles": ["Super Administrator"] },
   "mustChangePassword": false }
 ```
+
+If the account has a confirmed factor, login returns `{ "mfaRequired": true,
+"challenge": "…" }` — exchange it at `POST /auth/mfa/verify` `{ challenge, code }`.
+If MFA is **required but not enrolled**, login returns `{ "mfaEnrollmentRequired":
+true, "setupToken": "…" }`; enroll via `POST /auth/mfa/setup/begin` `{ setupToken }`
+(returns a TOTP secret) then `POST /auth/mfa/setup/confirm` `{ setupToken, code }`,
+which completes login. No session is issued until a factor is confirmed.
 
 **`POST /auth/refresh`** → rotates tokens using the `fleet_refresh` + `fleet_sid`
 cookies; returns a fresh `accessToken`, `accessExpiresAt`, and `csrfToken`.
@@ -119,6 +130,22 @@ Inventory CRUD. The list endpoint shows all hosts to holders of `Host.Enroll` /
 | DELETE | `/api/v1/hosts/{id}` | `Host.Delete` |
 | POST | `/api/v1/hosts/{id}/groups/{groupId}` | `Host.Edit` |
 | DELETE | `/api/v1/hosts/{id}/groups/{groupId}` | `Host.Edit` |
+| GET | `/api/v1/hosts/{id}/access` | `Host.Edit` |
+| POST | `/api/v1/hosts/{id}/users/{userId}` | `Host.Edit` |
+| DELETE | `/api/v1/hosts/{id}/users/{userId}` | `Host.Edit` |
+| POST | `/api/v1/hosts/{id}/enroll` | `Host.Enroll` |
+| GET | `/api/v1/hosts/{id}/enroll/script` | `Host.Enroll` |
+| POST | `/api/v1/hosts/{id}/enroll/finish` | `Host.Enroll` |
+| GET (WS) | `/api/v1/hosts/{id}/enroll/agent` | `Host.Enroll` (token) |
+
+**Enrollment methods** — `POST /hosts/{id}/enroll` body selects `method`:
+`"password"` (`+ bootstrapUser, password`), `"key"` (`+ privateKey, keyPassphrase`),
+`"trusted"`, or omit for trusted. `agent` uses the WebSocket (`fleet-enroll-agent`
+bridge); the no-install flow uses `GET …/enroll/script` (pipe through your own
+ssh) then `POST …/enroll/finish` `{ "hostPublicKey": "…" }`. See the
+[Host Enrollment Guide](./host-enrollment-guide.md).
+
+**`GET /hosts/{id}/access`** → `{ "groups": ["ops"], "users": [ … ] }`
 
 **`POST /hosts`**
 ```json
@@ -147,6 +174,8 @@ Inventory CRUD. The list endpoint shows all hosts to holders of `Host.Enroll` /
 | DELETE | `/api/v1/users/{id}` | `User.Delete` |
 | POST | `/api/v1/users/{id}/disable` | `User.Edit` |
 | POST | `/api/v1/users/{id}/unlock` | `User.Edit` |
+| POST | `/api/v1/users/{id}/require-mfa` | `User.Edit` |
+| GET | `/api/v1/users/{id}/hosts` | `User.Edit` |
 | POST | `/api/v1/users/{id}/reset-password` | `User.ResetPassword` |
 | POST | `/api/v1/users/{id}/roles/{roleId}` | `Role.Edit` |
 | DELETE | `/api/v1/users/{id}/roles/{roleId}` | `Role.Edit` |

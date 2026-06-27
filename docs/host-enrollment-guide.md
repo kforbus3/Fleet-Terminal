@@ -46,44 +46,61 @@ the platform issues is accepted — without distributing per-user keys or managi
 
 The response includes the new host `id`. This writes a `host.create` audit event.
 
-## Step 2 — Trust the Fleet user CA on the host
+## Step 2 — Bootstrap the host (install CA trust + WireGuard)
 
-Fetch the active user CA public key:
+Click the **Enroll** (cable) icon on the host row and pick how Fleet should reach
+the host for the one-time bootstrap. All methods install the CA trust + login
+user + sshd config and bring up WireGuard; they differ only in how the bootstrap
+SSH connection authenticates:
+
+| Method | Use when | Laptop install | Where the secret lives |
+|---|---|---|---|
+| **SSH password** | host has no prior setup and allows password auth | none | password, sent once over HTTPS |
+| **SSH private key** | password auth is disabled; you have an authorized key | none | key pasted once over HTTPS |
+| **SSH agent** | you want the key to never leave your machine | a small bridge binary | stays in your local agent (only signatures forwarded) |
+| **No install (ssh-pipe)** | you want neither an install nor to upload a key | none | stays on your machine (your own `ssh`) |
+| **Trusted (re-provision)** | host already trusts the Fleet CA | none | session certificate |
+
+**SSH agent** runs `fleet-enroll-agent` (build with `make enroll-agent-all`,
+distribute the per-OS binary). With your key loaded (`ssh-add`):
 
 ```sh
-curl -s http://localhost:8080/api/v1/certificates/ca \
-  -H "Authorization: Bearer $TOKEN" | jq -r .activeUserCA
+fleet-enroll-agent -url https://fleet.example.com -host web-01 \
+  -token "$FLEET_TOKEN" -bootstrap-user opsadmin [-via-jump]
 ```
 
-On the managed host, install it and trust it in `sshd_config`:
+**No install (ssh-pipe)** generates a command you run in your own terminal; it
+pipes a bootstrap script through *your* ssh and prints a host public key you paste
+back into the Finish step:
 
 ```sh
-# /etc/ssh/fleet_user_ca.pub  <- contents of activeUserCA
-sudo tee /etc/ssh/fleet_user_ca.pub >/dev/null <<'EOF'
-ssh-ed25519 AAAA... fleet-user-ca
-EOF
-
-# /etc/ssh/sshd_config
-TrustedUserCAKeys /etc/ssh/fleet_user_ca.pub
-
-sudo systemctl reload sshd
+curl -fsSL -H "Authorization: Bearer $TOKEN" \
+  "https://fleet.example.com/api/v1/hosts/<id>/enroll/script" | ssh opsadmin@web-01 sudo bash
 ```
 
-Create the login account the platform uses (matching the host's `ssh_user`,
-default `fleet`) and ensure the certificate principals (`fleet` and the
-operator's username) map to allowed logins. With CA trust in place you do **not**
-add per-user public keys to `authorized_keys`.
+Each method streams its step log and shows the assigned overlay address.
+Enrollment installs `/etc/ssh/fleet_ca.pub`, `TrustedUserCAKeys`, the
+`AuthorizedPrincipalsFile` mapping (principal `fleet`), and the login account — so
+you never add per-user keys to `authorized_keys`. For the fully manual path,
+fetch the CA with `GET /api/v1/certificates/ca`, configure `sshd_config`
+yourself, then enroll with the **Trusted** method.
 
-## Step 3 — Authorize users via groups
+## Step 3 — Authorize users (groups or direct grants)
 
-Access is granted by shared group membership:
+A user can reach a host through any of:
 
-1. Create or pick a group: `POST /api/v1/groups`.
-2. Add the host: `POST /api/v1/hosts/{hostId}/groups/{groupId}` (requires `Host.Edit`).
-3. Add users: `POST /api/v1/users/{userId}/groups/{groupId}` (requires `Group.Edit`).
+- **Shared group** — add the host and the user to the same group (host's
+  **Manage access** dialog or `POST /api/v1/hosts/{hostId}/groups/{groupId}`;
+  user: `POST /api/v1/users/{userId}/groups/{groupId}`).
+- **Direct grant** — give an individual user access to a single host (host's
+  **Manage access** dialog → *Individual users*, or
+  `POST /api/v1/hosts/{hostId}/users/{userId}`).
+- **Just-in-time** — a time-boxed approval grant (see the [User Guide](./user-guide.md)).
 
-Users without standing access can still request time-boxed access through the
-approval workflow (see the [User Guide](./user-guide.md)).
+To review access at a glance: a host's **Manage access** dialog lists its groups
+and directly-granted users; a user's **View accessible hosts** action lists every
+host they can currently reach. Each connection issues a **unique certificate for
+that (user, host) pair**.
 
 ## Step 4 — Verify connectivity
 

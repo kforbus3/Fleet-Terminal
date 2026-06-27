@@ -25,6 +25,11 @@ and operational recommendations.
   `key_id`). On logout the key is zeroized and its certificates revoked.
 - A background loop renews certificates ~24h before expiry
   (`FLEET_CERT_RENEW_BEFORE`) so active sessions don't break.
+- **Unique per-host certificates.** Connecting to a host mints a credential scoped
+  to that specific `(session, host)` pair — distinct key material and serial per
+  host. A cert issued for one host cannot be replayed against another, and the
+  blast radius of any single credential is one host. The vault zeroizes a
+  session's session-level **and** all per-host keys together on teardown.
 
 ## 2. Certificate authority hardening
 
@@ -68,7 +73,17 @@ and operational recommendations.
   HttpOnly, `Secure` (when `FLEET_COOKIE_SECURE=true`), and SameSite=Strict,
   scoped to `/api/v1/auth`. The CSRF cookie (`fleet_csrf`) is JS-readable by
   design (double-submit).
-- **MFA:** `mfa_methods` supports TOTP and WebAuthn enrollment.
+- **MFA:** `mfa_methods` supports TOTP and WebAuthn (passkeys). MFA is optional by
+  default and can be **enforced**: globally via the `require_mfa` setting (Users →
+  *Require MFA for all*) or per user via the `require_mfa` flag. When required and
+  no factor is enrolled, login issues **no session** until the user completes
+  forced TOTP enrollment. Prefer passkeys (phishing-resistant) for internet
+  exposure.
+- **Session reaping:** a background loop enforces idle (`FLEET_SESSION_IDLE_TTL`)
+  and absolute (`FLEET_SESSION_ABSOLUTE_TTL`) limits even for connections that
+  make no further HTTP requests. Logout, idle/absolute timeout, and account
+  disable/terminate all **force-close live terminals and in-flight SFTP
+  transfers** and revoke the session's certificates.
 
 ## 5. Authorization (RBAC)
 
@@ -78,9 +93,10 @@ and operational recommendations.
 - `Admin.All` (held by Super Administrators) is a wildcard that satisfies any
   check. Use it sparingly.
 - **Host access** is a separate gate from the RBAC permission: even with
-  `Host.Connect`, a user must share a group with the host or hold an active
-  temporary grant (super admins bypass). This is enforced at terminal connect
-  time (`UserCanAccessHost`).
+  `Host.Connect`, a user must reach the host via a **shared group**, a **direct
+  user→host grant** (`host_users`), or an active **temporary grant** — super
+  admins bypass. Enforced on every terminal and SFTP connection
+  (`UserCanAccessHost`). Users have no host access by default.
 - Prefer **least privilege**: narrow custom roles plus just-in-time approvals
   over broad standing access.
 
@@ -123,7 +139,18 @@ and operational recommendations.
 - Generate secrets with `openssl rand -hex 32`. Inject via your secret manager
   (`deploy/k8s/11-secret.yaml` for Kubernetes), not committed files.
 
-## 11. Monitoring & response
+## 11. Rate limiting & abuse resistance
+
+- A per-IP **token-bucket rate limiter** throttles abusive clients, with a
+  stricter budget on `/auth` and `/bootstrap` than the rest of the API
+  (`FLEET_AUTH_RATE_LIMIT_*` vs `FLEET_RATE_LIMIT_*`; `0` disables). Over-limit
+  requests get `429`. This complements — does not replace — per-account lockout.
+- The client IP is taken from `X-Forwarded-For`, so it is only trustworthy when
+  the app sits **behind a reverse proxy** that sets it. Never expose the backend
+  directly to the internet. For internet-facing deployments add edge defenses
+  (WAF, fail2ban, CAPTCHA) — see [internet-exposure.md](./internet-exposure.md).
+
+## 12. Monitoring & response
 
 - Scrape `GET /metrics` (Prometheus): HTTP request counts/latency plus session and
   gateway metrics. Alert on auth-failure spikes and audit-verify failures.
@@ -139,6 +166,8 @@ and operational recommendations.
 - [ ] Strong `FLEET_JWT_SECRET`, `FLEET_CSRF_SECRET`, `FLEET_CA_PASSPHRASE` set.
 - [ ] `FLEET_ENV=production`, `FLEET_COOKIE_SECURE=true`, TLS at the edge.
 - [ ] `FLEET_ALLOW_BOOTSTRAP=false` after initial setup.
+- [ ] **Require MFA** globally (or per user); prefer passkeys.
+- [ ] Per-IP rate limits set; app only reachable behind a reverse proxy.
 - [ ] Scheduled `audit/verify` with alerting; audit exports archived immutably.
 - [ ] Least-privilege roles; `Admin.All` limited to break-glass accounts.
 - [ ] CA public key distributed; rotation and revocation procedures rehearsed.

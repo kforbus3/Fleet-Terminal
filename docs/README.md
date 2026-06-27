@@ -22,14 +22,17 @@ the first Super Administrator. See the [Administrator Guide](./admin-guide.md).
 
 | Doc | Audience | What it covers |
 |-----|----------|----------------|
+| [deployment.md](./deployment.md) | operators | Deploy the whole system: config, local + production stack |
+| [internet-exposure.md](./internet-exposure.md) | operators / security | Exposing the UI to the internet behind a reverse proxy + MFA |
+| [operations.md](./operations.md) | operators | Day-to-day flows: enroll, connect, transfer, approvals, MFA |
 | [architecture.md](./architecture.md) | everyone | Component diagram, data flows, security model |
 | [api.md](./api.md) | integrators | REST + WebSocket endpoint reference by module |
 | [database.md](./database.md) | developers / DBAs | Table-by-table schema reference |
-| [admin-guide.md](./admin-guide.md) | administrators | Deploy, bootstrap, users/roles/groups, settings |
-| [user-guide.md](./user-guide.md) | end users | Signing in, connecting, approvals, replay |
+| [admin-guide.md](./admin-guide.md) | administrators | Bootstrap, users/roles/groups, host access, settings |
+| [user-guide.md](./user-guide.md) | end users | Signing in, 2FA, connecting, files, approvals, replay |
 | [developer-guide.md](./developer-guide.md) | developers | Build/test, layout, adding modules |
-| [host-enrollment-guide.md](./host-enrollment-guide.md) | operators | Trusting the CA, enrolling hosts, authorization |
-| [security-guide.md](./security-guide.md) | security | Controls, hardening, checklist |
+| [host-enrollment-guide.md](./host-enrollment-guide.md) | operators | Enrolling hosts (4 methods), authorization |
+| [security-guide.md](./security-guide.md) | security | Controls, MFA, rate limiting, hardening, checklist |
 | [certificate-lifecycle.md](./certificate-lifecycle.md) | operators | CA, issuance, renewal, revocation, rotation |
 | [disaster-recovery.md](./disaster-recovery.md) | operators | Backup, restore, recovery scenarios |
 
