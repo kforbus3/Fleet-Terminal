@@ -14,6 +14,7 @@ import (
 
 	"github.com/fleet-terminal/backend/internal/config"
 	"github.com/fleet-terminal/backend/internal/identity"
+	"github.com/fleet-terminal/backend/internal/jobs"
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/models"
 	"github.com/fleet-terminal/backend/internal/sshgw"
@@ -29,13 +30,14 @@ type Monitor struct {
 	gw     *sshgw.Gateway
 	issuer *identity.Issuer
 	hub    *ws.Hub
+	jobs   *jobs.Registry
 
 	interval time.Duration
 }
 
 // New constructs a Monitor.
-func New(st *store.Store, cfg *config.Config, log *slog.Logger, gw *sshgw.Gateway, issuer *identity.Issuer, hub *ws.Hub) *Monitor {
-	return &Monitor{store: st, cfg: cfg, log: log, gw: gw, issuer: issuer, hub: hub, interval: 30 * time.Second}
+func New(st *store.Store, cfg *config.Config, log *slog.Logger, gw *sshgw.Gateway, issuer *identity.Issuer, hub *ws.Hub, reg *jobs.Registry) *Monitor {
+	return &Monitor{store: st, cfg: cfg, log: log, gw: gw, issuer: issuer, hub: hub, jobs: reg, interval: 30 * time.Second}
 }
 
 // Run drives the monitoring loop until ctx is cancelled.
@@ -59,11 +61,17 @@ func (m *Monitor) sweep(ctx context.Context) {
 	hosts, err := m.store.ListHosts(ctx, 1000, 0)
 	if err != nil {
 		m.log.Warn("monitor list hosts", "err", err)
+		if m.jobs != nil {
+			m.jobs.Record("host-monitor", err)
+		}
 		return
 	}
 	signer, err := m.issuer.SystemSigner(ctx, []string{"fleet"}, 24*time.Hour)
 	if err != nil {
 		m.log.Warn("monitor system signer", "err", err)
+		if m.jobs != nil {
+			m.jobs.Record("host-monitor", err)
+		}
 		return
 	}
 	for i := range hosts {
@@ -83,6 +91,9 @@ func (m *Monitor) sweep(ctx context.Context) {
 		})
 	}
 	m.refreshGauges(ctx)
+	if m.jobs != nil {
+		m.jobs.Record("host-monitor", nil)
+	}
 }
 
 // probe runs a lightweight authenticated SSH command through the jump host and

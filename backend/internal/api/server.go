@@ -29,12 +29,14 @@ import (
 	"github.com/fleet-terminal/backend/internal/enrollment"
 	"github.com/fleet-terminal/backend/internal/hosts"
 	"github.com/fleet-terminal/backend/internal/identity"
+	"github.com/fleet-terminal/backend/internal/jobs"
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/monitor"
 	"github.com/fleet-terminal/backend/internal/sessionsapi"
 	fleetsftp "github.com/fleet-terminal/backend/internal/sftp"
 	"github.com/fleet-terminal/backend/internal/sshgw"
 	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/fleet-terminal/backend/internal/system"
 	"github.com/fleet-terminal/backend/internal/terminal"
 	"github.com/fleet-terminal/backend/internal/ws"
 )
@@ -53,6 +55,7 @@ type Server struct {
 	Issuer  *identity.Issuer
 	Gateway *sshgw.Gateway
 	Hub     *ws.Hub
+	Jobs    *jobs.Registry
 
 	router chi.Router
 }
@@ -74,6 +77,7 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 		Issuer:  issuer,
 		Gateway: gateway,
 		Hub:     ws.NewHub(),
+		Jobs:    jobs.NewRegistry(),
 	}
 
 	// On login, mint an ephemeral SSH identity bound to the session; on logout,
@@ -102,7 +106,7 @@ func (s *Server) InitBackground(ctx context.Context) error {
 	}
 	go s.renewalLoop(ctx)
 	go s.reaperLoop(ctx)
-	go monitor.New(s.Store, s.Cfg, s.Log, s.Gateway, s.Issuer, s.Hub).Run(ctx)
+	go monitor.New(s.Store, s.Cfg, s.Log, s.Gateway, s.Issuer, s.Hub, s.Jobs).Run(ctx)
 	return nil
 }
 
@@ -117,6 +121,7 @@ func (s *Server) reaperLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			approvals.Reaper(ctx, deps)
+			s.Jobs.Record("approval-expiry", nil)
 		}
 	}
 }
@@ -130,6 +135,7 @@ func (s *Server) renewalLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			s.Issuer.RenewExpiring(ctx)
+			s.Jobs.Record("certificate-renewal", nil)
 		}
 	}
 }
@@ -219,6 +225,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	auditapi.Mount(r, deps)
 	sessionsapi.Mount(r, deps)
 	approvals.Mount(r, deps)
+	system.Mount(r, deps, s.Jobs)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
