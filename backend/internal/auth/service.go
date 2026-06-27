@@ -199,10 +199,31 @@ func (s *Service) Refresh(ctx context.Context, sessionID uuid.UUID, presentedRef
 
 // Logout revokes a session and triggers ephemeral credential destruction.
 func (s *Service) Logout(ctx context.Context, sessionID uuid.UUID) error {
+	return s.endSession(ctx, sessionID)
+}
+
+// endSession revokes a session AND destroys its in-RAM private key and revokes
+// its certificates (KRL). Used by logout, idle/absolute timeout, and account
+// disable/delete so credentials never outlive the session.
+func (s *Service) endSession(ctx context.Context, sessionID uuid.UUID) error {
 	if s.onSessionDestroyed != nil {
 		s.onSessionDestroyed(ctx, uuid.Nil, sessionID, "")
 	}
 	return s.store.RevokeSession(ctx, sessionID)
+}
+
+// DestroyUserSessions ends every active session for a user — zeroizing each
+// session's private key and revoking its certificates. Call before disabling or
+// deleting an account so the user's credentials are immediately useless.
+func (s *Service) DestroyUserSessions(ctx context.Context, userID uuid.UUID) {
+	sessions, err := s.store.ListUserSessions(ctx, userID)
+	if err != nil {
+		s.log.Warn("destroy user sessions: list", "err", err)
+		return
+	}
+	for _, sess := range sessions {
+		_ = s.endSession(ctx, sess.ID)
+	}
 }
 
 // loadPrincipal builds a Principal from a validated session, resolving permissions.
@@ -211,12 +232,21 @@ func (s *Service) loadPrincipal(ctx context.Context, claims *Claims) (*Principal
 	if err != nil || sess.RevokedAt != nil || sess.ExpiresAt.Before(time.Now()) {
 		return nil, ErrSessionInvalid
 	}
+	// End the session — AND destroy its ephemeral SSH credentials — when it goes
+	// idle, or when it exceeds the absolute maximum lifetime (a hard cap that
+	// rolling token refresh cannot extend).
 	if s.cfg.SessionIdleTTL > 0 && time.Since(sess.LastSeenAt) > s.cfg.SessionIdleTTL {
-		_ = s.store.RevokeSession(ctx, sess.ID)
+		s.endSession(ctx, sess.ID)
+		return nil, ErrSessionInvalid
+	}
+	if s.cfg.SessionAbsoluteTTL > 0 && time.Since(sess.CreatedAt) > s.cfg.SessionAbsoluteTTL {
+		s.endSession(ctx, sess.ID)
 		return nil, ErrSessionInvalid
 	}
 	u, err := s.store.GetUserByID(ctx, claims.UserID)
 	if err != nil || u.IsDisabled {
+		// Disabled/removed account: tear down credentials too.
+		s.endSession(ctx, sess.ID)
 		return nil, ErrSessionInvalid
 	}
 	perms, err := s.store.UserPermissions(ctx, u.ID)

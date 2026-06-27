@@ -146,10 +146,15 @@ func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal
 		return
 	}
 
-	// Persist the SSH session record + start recording.
+	// Persist the SSH session record + start recording. Record the certificate
+	// serial used, so the session is auditable back to a specific issued cert.
+	var certSerial *uint64
+	if serial, ok := h.gw.CredentialSerial(p.SessionID.String()); ok {
+		certSerial = &serial
+	}
 	rec, _ := h.d.Store.CreateSSHSession(ctx, store.SSHSessionInput{
 		SessionID: &p.SessionID, UserID: &p.UserID, HostID: &host.ID,
-		Username: p.Username, Hostname: host.Hostname,
+		Username: p.Username, Hostname: host.Hostname, CertSerial: certSerial,
 	})
 	var sshSessionID uuid.UUID
 	if rec != nil {

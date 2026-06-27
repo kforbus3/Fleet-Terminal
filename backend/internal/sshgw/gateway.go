@@ -237,6 +237,16 @@ func (g *Gateway) DialDirect(ctx context.Context, sessionID, addr string, port i
 	return ssh.NewClient(ncc, chans, reqs), nil
 }
 
+// CredentialSerial returns the serial of the certificate bound to a session, for
+// audit/verification (recorded on each SSH session).
+func (g *Gateway) CredentialSerial(sessionID string) (uint64, bool) {
+	cred, ok := g.vaultLookup(sessionID)
+	if !ok {
+		return 0, false
+	}
+	return cred.Serial, true
+}
+
 func (g *Gateway) vaultLookup(sessionID string) (*identity.Credential, bool) {
 	id, err := uuid.Parse(sessionID)
 	if err != nil {

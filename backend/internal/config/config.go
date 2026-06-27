@@ -33,6 +33,7 @@ type Config struct {
 	AccessTokenTTL    time.Duration // short-lived
 	RefreshTokenTTL   time.Duration // long-lived rotating
 	SessionIdleTTL    time.Duration
+	SessionAbsoluteTTL time.Duration // hard cap on session age (0 = unlimited)
 	CookieDomain      string
 	CookieSecure      bool
 	CSRFSecret        []byte
@@ -92,6 +93,7 @@ func Load() (*Config, error) {
 		AccessTokenTTL:     envDuration("FLEET_ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:    envDuration("FLEET_REFRESH_TOKEN_TTL", 720*time.Hour),
 		SessionIdleTTL:     envDuration("FLEET_SESSION_IDLE_TTL", 30*time.Minute),
+		SessionAbsoluteTTL: envDuration("FLEET_SESSION_ABSOLUTE_TTL", 12*time.Hour),
 		CookieDomain:       env("FLEET_COOKIE_DOMAIN", ""),
 		CookieSecure:       envBool("FLEET_COOKIE_SECURE", true),
 		UserCertTTL:        envDuration("FLEET_USER_CERT_TTL", 7*24*time.Hour),

@@ -113,6 +113,9 @@ func (h *handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
+	// Destroy live sessions first (zeroize in-RAM private keys + revoke certs)
+	// before the row + cascade delete, so nothing outlives the account.
+	h.d.Auth.DestroyUserSessions(r.Context(), id)
 	if err := h.d.Store.DeleteUser(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not delete user")
 		return
@@ -136,6 +139,10 @@ func (h *handler) disableUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.d.Store.SetDisabled(r.Context(), id, rq.Disabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not update user")
 		return
+	}
+	// Disabling immediately ends live sessions and destroys their credentials.
+	if rq.Disabled {
+		h.d.Auth.DestroyUserSessions(r.Context(), id)
 	}
 	h.audit(r, "user.set_disabled", "user", id.String(), map[string]any{"disabled": rq.Disabled})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "updated", "disabled": rq.Disabled})

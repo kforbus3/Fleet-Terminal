@@ -165,15 +165,40 @@ func (s *Store) RevokeCertificate(ctx context.Context, serial uint64, reason str
 }
 
 // RevokeSessionCertificates revokes all certs bound to a browser session
-// (called on logout/idle/cleanup), returning the count revoked.
+// (called on logout/idle/cleanup), marking them revoked AND recording their
+// serials in the KRL (cert_revocations) so the revocation survives even if the
+// certificate rows are later deleted (e.g. by a cascading user delete).
 func (s *Store) RevokeSessionCertificates(ctx context.Context, sessionID uuid.UUID, reason string) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE ssh_certificates SET revoked_at=now(), revoke_reason=$2
-		WHERE session_id=$1 AND revoked_at IS NULL`, sessionID, reason)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
+	var count int64
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			UPDATE ssh_certificates SET revoked_at=now(), revoke_reason=$2
+			WHERE session_id=$1 AND revoked_at IS NULL
+			RETURNING serial`, sessionID, reason)
+		if err != nil {
+			return err
+		}
+		var serials []int64
+		for rows.Next() {
+			var serial int64
+			if err := rows.Scan(&serial); err != nil {
+				rows.Close()
+				return err
+			}
+			serials = append(serials, serial)
+		}
+		rows.Close()
+		for _, serial := range serials {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO cert_revocations (serial, reason) VALUES ($1,$2) ON CONFLICT (serial) DO NOTHING`,
+				serial, reason); err != nil {
+				return err
+			}
+		}
+		count = int64(len(serials))
+		return nil
+	})
+	return count, err
 }
 
 // RevokedSerials returns all revoked serials (for KRL generation).
