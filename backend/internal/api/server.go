@@ -3,7 +3,10 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -32,6 +35,7 @@ import (
 	"github.com/fleet-terminal/backend/internal/hosts"
 	"github.com/fleet-terminal/backend/internal/identity"
 	"github.com/fleet-terminal/backend/internal/jobs"
+	"github.com/fleet-terminal/backend/internal/krl"
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/monitor"
 	"github.com/fleet-terminal/backend/internal/sessionsapi"
@@ -123,8 +127,96 @@ func (s *Server) InitBackground(ctx context.Context) error {
 	go s.renewalLoop(ctx)
 	go s.reaperLoop(ctx)
 	go s.retentionLoop(ctx)
+	go s.krlLoop(ctx)
 	go monitor.New(s.Store, s.Cfg, s.Log, s.Gateway, s.Issuer, s.Hub, s.Jobs).Run(ctx)
 	return nil
+}
+
+// krlLoop rebuilds the certificate revocation list and pushes it to enrolled
+// hosts whenever the set of revoked serials changes, so revocations take effect
+// on hosts (which enforce it via the RevokedKeys directive installed at enroll).
+func (s *Server) krlLoop(ctx context.Context) {
+	t := time.NewTicker(10 * time.Minute)
+	defer t.Stop()
+	var lastHash string
+	tick := func() {
+		if !krl.Available() {
+			return
+		}
+		caKeys, _ := s.Store.ListActiveCAPublicKeys(ctx, "user")
+		serials, _ := s.Store.RevokedSerials(ctx)
+		krlBytes, err := krl.Build(caKeys, serials)
+		if err != nil {
+			s.Jobs.Record("krl-distribution", err)
+			return
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256(krlBytes))
+		if hash == lastHash { // no change since last successful push
+			s.Jobs.Record("krl-distribution", nil)
+			return
+		}
+		if _, err := s.distributeKRL(ctx); err != nil {
+			s.Jobs.Record("krl-distribution", err)
+			return
+		}
+		lastHash = hash
+		s.Jobs.Record("krl-distribution", nil)
+	}
+	tick()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			tick()
+		}
+	}
+}
+
+// distributeKRL builds the current KRL and writes it to every enrolled host.
+// Returns the number of hosts updated. Hosts read RevokedKeys per-auth, so no
+// sshd reload is needed for updates to take effect.
+func (s *Server) distributeKRL(ctx context.Context) (int, error) {
+	if !krl.Available() {
+		return 0, fmt.Errorf("ssh-keygen not available")
+	}
+	// Drop KRL entries for certificates that have already expired (keeps it small).
+	_, _ = s.Store.PruneExpiredRevocations(ctx, time.Now().Add(-s.Cfg.UserCertTTL))
+	caKeys, _ := s.Store.ListActiveCAPublicKeys(ctx, "user")
+	serials, _ := s.Store.RevokedSerials(ctx)
+	krlBytes, err := krl.Build(caKeys, serials)
+	if err != nil {
+		return 0, err
+	}
+	signer, err := s.Issuer.SystemSigner(ctx, []string{"fleet"}, 24*time.Hour)
+	if err != nil {
+		return 0, err
+	}
+	hosts, _ := s.Store.ListHosts(ctx, 1000, 0)
+	b64 := base64.StdEncoding.EncodeToString(krlBytes)
+	cmd := "echo " + b64 + " | base64 -d | sudo tee /etc/ssh/fleet_krl >/dev/null && sudo chmod 644 /etc/ssh/fleet_krl && echo OK"
+	pushed := 0
+	for i := range hosts {
+		h := hosts[i]
+		if !h.Enrolled {
+			continue
+		}
+		for _, addr := range dedupe([]string{h.WGAddress, h.Address, h.Hostname}) {
+			conn, derr := s.Gateway.DialWithSigner(ctx, signer, addr, h.SSHPort, h.SSHUser)
+			if derr != nil {
+				continue
+			}
+			if sess, e := conn.Client.NewSession(); e == nil {
+				_, _ = sess.CombinedOutput(cmd)
+				sess.Close()
+				pushed++
+			}
+			conn.Close()
+			break
+		}
+	}
+	s.Log.Info("distributed KRL", "hosts", pushed, "revokedSerials", len(serials))
+	return pushed, nil
 }
 
 // retentionLoop prunes session recordings older than the configured retention
@@ -252,6 +344,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	})
 
 	deps := &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log, Auth: s.Auth, CA: s.Issuer, Gateway: s.Gateway}
+	deps.DistributeKRL = s.distributeKRL
 
 	// M2 — first-run wizard + authentication.
 	bootstrap.NewHandler(s.Store, s.Cfg).Mount(r)

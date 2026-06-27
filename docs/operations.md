@@ -79,3 +79,19 @@ automatically; a background reaper revokes elapsed grants every minute.
 
 **Audit → Verify integrity** recomputes the hash chain; any tampering with a historical row
 makes verification fail and reports the first broken sequence number.
+
+## Certificate revocation (enforced on hosts)
+
+Revocation is enforced end-to-end via OpenSSH KRLs:
+
+- Enrollment installs `/etc/ssh/fleet_krl` and adds `RevokedKeys /etc/ssh/fleet_krl` to the
+  host's sshd config (rolled back automatically if sshd would reject it — hosts are never
+  locked out).
+- Logout, idle/absolute timeout, and account disable/delete revoke the session's certificate
+  into the KRL (`cert_revocations`); an admin can also revoke a specific serial from the
+  **Certificates** page.
+- The backend rebuilds the KRL (`ssh-keygen -k`) and **pushes it to all enrolled hosts**:
+  immediately after a manual revoke, and within ~10 minutes for other revocations (background
+  `krl-distribution` job). `POST /api/v1/certificates/krl/distribute` forces an immediate push.
+- Hosts read `RevokedKeys` on every authentication, so updates take effect with no sshd reload.
+- KRL entries for already-expired certificates are pruned automatically so the list stays small.

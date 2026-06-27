@@ -6,6 +6,7 @@ package enrollment
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/fleet-terminal/backend/internal/config"
+	"github.com/fleet-terminal/backend/internal/krl"
 	"github.com/fleet-terminal/backend/internal/models"
 	"github.com/fleet-terminal/backend/internal/sshgw"
 	"github.com/fleet-terminal/backend/internal/store"
@@ -263,6 +265,24 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	}
 	step("configure_jump_peer", "ok", fmt.Sprintf("peer %s allowed-ips %s/32", short(hostPub), wgIP))
 
+	// 8b) Install the KRL + RevokedKeys directive so the host enforces certificate
+	//     revocation. A valid KRL is written BEFORE enabling the directive, and the
+	//     change is rolled back if sshd rejects the config (never lock the host out).
+	if krl.Available() {
+		caKeys, _ := s.store.ListActiveCAPublicKeys(ctx, "user")
+		serials, _ := s.store.RevokedSerials(ctx)
+		if krlBytes, kerr := krl.Build(caKeys, serials); kerr == nil {
+			b64 := base64.StdEncoding.EncodeToString(krlBytes)
+			if out, err := priv(s.krlInstallScript(b64)); err != nil || !strings.Contains(out, "KRL_OK") {
+				step("configure_revocation", "warning", orErr(err, out).Error())
+			} else {
+				step("configure_revocation", "ok", fmt.Sprintf("RevokedKeys enforced (%d revoked)", len(serials)))
+			}
+		} else {
+			step("configure_revocation", "skipped", "could not build KRL: "+kerr.Error())
+		}
+	}
+
 	// 9) Connectivity check: confirm the WireGuard tunnel actually establishes a
 	//    handshake. A failure here usually means the jump endpoint is not
 	//    reachable from the host (firewall / wrong address / UDP port closed).
@@ -415,6 +435,29 @@ echo "WGSTATE=$WGSTATE"
 echo "WGADDR=$WGADDR"
 echo "HOSTPUB=$PUB"`,
 		iface, wgIP, s.cfg.WGSubnet, jumpPub, jumpEndpoint, s.cfg.WGPort)
+}
+
+// krlInstallScript writes the KRL and enables the RevokedKeys directive, rolling
+// back the directive if sshd rejects the resulting config.
+func (s *Service) krlInstallScript(b64 string) string {
+	return fmt.Sprintf(`set -e
+printf '%%s' '%s' | base64 -d > /etc/ssh/fleet_krl
+chmod 644 /etc/ssh/fleet_krl
+DROP=/etc/ssh/sshd_config.d/00-fleet.conf
+if [ -f "$DROP" ]; then
+  grep -q '^RevokedKeys' "$DROP" || echo 'RevokedKeys /etc/ssh/fleet_krl' >> "$DROP"
+  TARGET="$DROP"
+else
+  grep -q '^RevokedKeys' /etc/ssh/sshd_config || echo 'RevokedKeys /etc/ssh/fleet_krl' >> /etc/ssh/sshd_config
+  TARGET=/etc/ssh/sshd_config
+fi
+if ! sshd -t 2>/dev/null; then
+  # Roll back the directive so we never lock the host out.
+  sed -i '\#^RevokedKeys /etc/ssh/fleet_krl#d' "$TARGET"
+  echo "KRL_ROLLBACK sshd config rejected"; exit 1
+fi
+( systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || service sshd reload 2>/dev/null || service ssh reload 2>/dev/null || pkill -HUP sshd 2>/dev/null ) || true
+echo KRL_OK`, b64)
 }
 
 // jumpPeerScript renders the script that adds the host as a peer on the jump host.

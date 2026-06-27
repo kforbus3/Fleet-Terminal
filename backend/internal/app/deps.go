@@ -4,6 +4,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/fleet-terminal/backend/internal/auth"
@@ -22,6 +23,10 @@ type Deps struct {
 	// that need them (terminal, sftp, enrollment, monitor) read these fields.
 	CA      CAIssuer
 	Gateway Dialer
+
+	// DistributeKRL pushes the current certificate revocation list to all enrolled
+	// hosts immediately (set by the server). Returns the number of hosts updated.
+	DistributeKRL func(ctx context.Context) (int, error)
 }
 
 // CAIssuer issues and manages ephemeral SSH user certificates. The concrete

@@ -25,6 +25,7 @@ func Mount(r chi.Router, d *app.Deps, caMgr *ca.CA) {
 		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Get("/certificates/ca", h.listCA)
 		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Post("/certificates/ca/rotate", h.rotate)
 		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Get("/certificates/krl", h.krl)
+		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Post("/certificates/krl/distribute", h.distribute)
 		pr.With(d.Auth.RequirePermission("Certificate.Manage")).Post("/certificates/{serial}/revoke", h.revoke)
 	})
 }
@@ -80,7 +81,27 @@ func (h *handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "certificate.revoke", strconv.FormatUint(serial, 10), map[string]any{"reason": body.Reason})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+	// Push the updated KRL to hosts immediately so the revocation takes effect.
+	pushed := 0
+	if h.d.DistributeKRL != nil {
+		pushed, _ = h.d.DistributeKRL(r.Context())
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "revoked", "hostsUpdated": pushed})
+}
+
+// distribute pushes the current KRL to all enrolled hosts on demand.
+func (h *handler) distribute(w http.ResponseWriter, r *http.Request) {
+	if h.d.DistributeKRL == nil {
+		writeError(w, http.StatusNotImplemented, "distribution unavailable")
+		return
+	}
+	pushed, err := h.d.DistributeKRL(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "distribution failed: "+err.Error())
+		return
+	}
+	h.audit(r, "certificate.krl_distribute", "", map[string]any{"hostsUpdated": pushed})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "distributed", "hostsUpdated": pushed})
 }
 
 func (h *handler) krl(w http.ResponseWriter, r *http.Request) {

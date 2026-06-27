@@ -201,6 +201,17 @@ func (s *Store) RevokeSessionCertificates(ctx context.Context, sessionID uuid.UU
 	return count, err
 }
 
+// PruneExpiredRevocations drops KRL entries older than the cutoff. A revoked
+// certificate that has already expired is rejected by its validity dates anyway,
+// so keeping its serial in the KRL is unnecessary — this bounds the KRL size.
+func (s *Store) PruneExpiredRevocations(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM cert_revocations WHERE revoked_at < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // RevokedSerials returns all revoked serials (for KRL generation).
 func (s *Store) RevokedSerials(ctx context.Context) ([]uint64, error) {
 	rows, err := s.pool.Query(ctx, `SELECT serial FROM cert_revocations ORDER BY serial`)
