@@ -21,13 +21,23 @@ Day-to-day operator flows for Fleet Terminal. Assumes the stack is up via `make 
    - **WireGuard Address** — leave blank to **auto-assign** the next free overlay address, or
      type a specific one (validated to be in the overlay subnet and not already used)
    - **SSH user** — `fleet` for the test fabric
-2. Click the **Enroll** (cable) icon on the host row. Enrollment, over SSH:
+2. Click the **Enroll** (cable) icon on the host row and choose how to reach the host:
+   - **SSH password** — for a brand-new/existing host with *no prior setup*. Provide an SSH
+     user (root or a sudoer) + password. Enrollment installs the CA trust, creates the login
+     user, configures + reloads sshd, **installs WireGuard**, brings up the tunnel, and
+     validates per-user certificate login. The password is used once and never stored.
+   - **Already trusts the Fleet CA** — re-provision a host that was previously enrolled, using
+     the session certificate.
+3. Enrollment, over SSH:
    - reads the jump host's WireGuard key,
-   - cert-authenticates to the managed host and collects facts,
+   - (password bootstrap) installs `/etc/ssh/fleet_ca.pub`, the login user + sudo + principal
+     mapping, and the sshd drop-in, then reloads sshd,
+   - installs WireGuard tooling if missing (apt/dnf/yum/apk),
    - generates the host's WireGuard keypair **on the host** (private key never leaves it),
-   - brings up `wg0` with the overlay address and writes `/etc/wireguard/wg0.conf`,
+   - brings up `wg0` (kernel module, or userspace `wireguard-go` fallback) and writes
+     `/etc/wireguard/wg0.conf`,
    - registers the host as a peer on the jump host (the VPN server),
-   - verifies the handshake.
+   - **verifies per-user certificate login** through the jump host.
    A dialog streams each step and shows the assigned overlay address.
 
 > WireGuard address pool and endpoints are configured via `FLEET_WG_SUBNET`,

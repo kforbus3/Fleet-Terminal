@@ -117,9 +117,18 @@ export interface EnrollmentResult {
   hostPublicKey: string;
 }
 
-// Enroll provisions the WireGuard tunnel (jump-host peer + host interface) and
-// trust for a host, then brings the interface up.
-export async function enrollHost(id: string): Promise<EnrollmentResult> {
-  const { data } = await api.post<EnrollmentResult>(`/api/v1/hosts/${id}/enroll`);
+export interface EnrollParams {
+  // "password" bootstraps a host with no prior setup (installs CA trust +
+  // WireGuard over an SSH password); "trusted" uses the session certificate on
+  // a host that already trusts the Fleet CA.
+  method: "password" | "trusted";
+  bootstrapUser?: string;
+  password?: string;
+}
+
+// Enroll installs CA trust + WireGuard on the host (when bootstrapping), sets up
+// the tunnel + jump-host peer, and validates per-user certificate login.
+export async function enrollHost(id: string, params: EnrollParams): Promise<EnrollmentResult> {
+  const { data } = await api.post<EnrollmentResult>(`/api/v1/hosts/${id}/enroll`, params);
   return data;
 }

@@ -102,6 +102,29 @@ func (g *Gateway) DialHost(handle, host string, port int, user string) (any, err
 	return g.Dial(context.Background(), handle, host, port, user)
 }
 
+// DialDirectPassword opens a direct SSH connection authenticating with a
+// password. Enrollment uses this to bootstrap a brand-new host that does not yet
+// trust the Fleet CA (chicken-and-egg: we install the trust over this session).
+func (g *Gateway) DialDirectPassword(ctx context.Context, addr string, port int, user, password string) (*ssh.Client, error) {
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.Password(password)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	}
+	d := net.Dialer{Timeout: 15 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(addr, fmt.Sprintf("%d", port)))
+	if err != nil {
+		return nil, fmt.Errorf("dial %s:%d: %w", addr, port, err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("ssh password auth to %s: %w", addr, err)
+	}
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
 // DialWithSigner connects to host:port through the jump host using an explicit
 // certificate signer (e.g. the monitor's system identity) rather than a session
 // credential from the vault.

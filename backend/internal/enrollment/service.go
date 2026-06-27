@@ -45,10 +45,31 @@ type Result struct {
 
 // Enroll provisions WireGuard + trust for a host using the caller's session
 // credentials. It is idempotent: re-running re-applies configuration.
-func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.Host, actor *uuid.UUID) (*Result, error) {
+// EnrollParams controls how enrollment reaches the host for the initial bootstrap.
+type EnrollParams struct {
+	// Method is "password" to bootstrap a host that does not yet trust the Fleet
+	// CA (installs trust + WireGuard over an SSH password), or "trusted" to use
+	// the caller's session certificate on a host that already trusts the CA.
+	Method       string
+	BootstrapUser string
+	Password      string
+}
+
+func (p EnrollParams) method() string {
+	if p.Method == "password" {
+		return "password"
+	}
+	return "trusted"
+}
+
+func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.Host, actor *uuid.UUID, params EnrollParams) (*Result, error) {
 	mgmtAddr := host.Address
 	if mgmtAddr == "" {
 		mgmtAddr = host.Hostname // fall back to a resolvable name
+	}
+	loginUser := host.SSHUser
+	if loginUser == "" {
+		loginUser = "fleet"
 	}
 	job, err := s.store.CreateEnrollmentJob(ctx, host.ID, fmt.Sprintf("%s:%d", mgmtAddr, host.SSHPort), "", actor)
 	if err != nil {
@@ -69,7 +90,8 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 
-	// 1) Reach the jump host directly and read its WireGuard public key.
+	// 1) Reach the jump host (the VPN server, which already trusts the CA) and
+	//    read its WireGuard public key.
 	jumpAddr, jumpPort := splitHostPort(s.cfg.JumpHost, 22)
 	jumpClient, err := s.gw.DialDirect(ctx, sessionID.String(), jumpAddr, jumpPort, s.cfg.JumpUser)
 	if err != nil {
@@ -83,13 +105,40 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	jumpPub = strings.TrimSpace(jumpPub)
 	step("connect_jump_host", "ok", "jump WG pubkey "+short(jumpPub))
 
-	// 2) Reach the managed host directly (it is not on the overlay yet).
-	hostClient, err := s.gw.DialDirect(ctx, sessionID.String(), mgmtAddr, host.SSHPort, host.SSHUser)
-	if err != nil {
-		return fail("connect_host", err)
+	// 2) Connect to the host for bootstrap. With "password" we authenticate with
+	//    a bootstrap credential (the host need not trust the CA yet); with
+	//    "trusted" we use the session certificate on an already-trusted host.
+	var hostClient *ssh.Client
+	var isRoot bool
+	var sudoPass string
+	if params.method() == "password" {
+		buser := params.BootstrapUser
+		if buser == "" {
+			buser = "root"
+		}
+		isRoot = buser == "root"
+		if !isRoot {
+			sudoPass = params.Password
+		}
+		hostClient, err = s.gw.DialDirectPassword(ctx, mgmtAddr, host.SSHPort, buser, params.Password)
+		if err != nil {
+			return fail("connect_host", err)
+		}
+		step("connect_host", "ok", "ssh password auth as "+buser+"@"+mgmtAddr)
+	} else {
+		hostClient, err = s.gw.DialDirect(ctx, sessionID.String(), mgmtAddr, host.SSHPort, loginUser)
+		if err != nil {
+			return fail("connect_host", err)
+		}
+		step("connect_host", "ok", "ssh certificate auth to "+mgmtAddr)
 	}
 	defer hostClient.Close()
-	step("connect_host", "ok", "ssh certificate auth to "+mgmtAddr)
+
+	// Privileged command runner: root runs directly; otherwise via sudo (with the
+	// bootstrap password piped to sudo -S when one was provided).
+	priv := func(script string) (string, error) {
+		return privRun(hostClient, isRoot, sudoPass, script)
+	}
 
 	// 3) Collect host facts.
 	if facts, ferr := run(hostClient, "uname -s; uname -r; uname -m; (. /etc/os-release 2>/dev/null; echo \"$NAME $VERSION_ID\"); ssh -V 2>&1 | head -1"); ferr == nil {
@@ -99,8 +148,27 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		step("collect_facts", "skipped", ferr.Error())
 	}
 
-	// 4) Determine the overlay address. If the operator specified one, validate
-	//    it; otherwise auto-assign the lowest free address from the pool.
+	// 4) For a password bootstrap, install the SSH CA trust, the login user, and
+	//    sshd configuration so subsequent per-user certificate logins work.
+	if params.method() == "password" {
+		caKeys, kerr := s.store.ListActiveCAPublicKeys(ctx, "user")
+		if kerr != nil || len(caKeys) == 0 {
+			return fail("install_trust", orErr(kerr, "no active user CA"))
+		}
+		if out, err := priv(s.caTrustScript(loginUser, strings.Join(caKeys, "\n"))); err != nil || !strings.Contains(out, "CA_OK") {
+			return fail("install_trust", orErr(err, out))
+		}
+		step("install_trust", "ok", "CA trust + login user '"+loginUser+"' + sshd configured")
+	}
+
+	// 5) Ensure WireGuard is installed (no-op if already present).
+	if out, err := priv(wgInstallScript); err != nil || strings.Contains(out, "WG_MISSING") {
+		return fail("install_wireguard", orErr(err, out+" (could not install wireguard tools)"))
+	} else {
+		step("install_wireguard", "ok", "wireguard tooling present")
+	}
+
+	// 6) Determine the overlay address (operator-specified or auto-assigned).
 	wgIP := strings.TrimSpace(host.WGAddress)
 	if wgIP != "" {
 		if !isOverlayAddr(wgIP, s.cfg.WGJumpIP) {
@@ -117,8 +185,10 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 			return fail("assign_overlay_address", err)
 		}
 	}
-	hostScript := s.hostWGScript(wgIP, jumpPub)
-	out, err := run(hostClient, "sudo sh -c "+shellQuote(hostScript))
+
+	// 7) Bring up WireGuard on the host (kernel module preferred, userspace
+	//    wireguard-go fallback). The private key is generated on the host.
+	out, err := priv(s.hostWGScript(wgIP, jumpPub))
 	if err != nil {
 		return fail("configure_host_wireguard", orErr(err, out))
 	}
@@ -128,7 +198,7 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	}
 	step("configure_host_wireguard", "ok", fmt.Sprintf("wg0=%s pub=%s", wgIP, short(hostPub)))
 
-	// 5) Add the host as a peer on the jump host (the VPN server).
+	// 8) Add the host as a peer on the jump host (the VPN server).
 	hostEndpoint := fmt.Sprintf("%s:%d", mgmtAddr, s.cfg.WGPort)
 	jumpScript := s.jumpPeerScript(host.Hostname, hostPub, hostEndpoint, wgIP)
 	if jout, jerr := run(jumpClient, "sudo sh -c "+shellQuote(jumpScript)); jerr != nil {
@@ -136,27 +206,48 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 	}
 	step("configure_jump_peer", "ok", fmt.Sprintf("peer %s allowed-ips %s/32", short(hostPub), wgIP))
 
-	// 6) Verify the tunnel established a handshake.
-	hs := s.waitHandshake(hostClient)
-	if hs {
-		step("verify_tunnel", "ok", "wireguard handshake established")
-	} else {
-		// Non-fatal: handshake may lag, or (in the local userspace fabric on
-		// macOS) the data plane is limited. The tunnel is configured either way.
-		step("verify_tunnel", "skipped", "no handshake observed yet (configuration applied)")
-	}
-
-	// 7) Persist results.
+	// 9) Persist the address/enrolled state now so the validation dial can use it.
 	_ = s.store.SetHostWGAddress(ctx, host.ID, wgIP)
 	_ = s.store.SetHostEnrolled(ctx, host.ID, true)
+
+	// 10) Validate end to end: connect through the jump host using a per-user
+	//     certificate and run a command, proving cert auth + the tunnel path.
+	if id, verr := s.validateCertLogin(ctx, sessionID, wgIP, mgmtAddr, host.SSHPort, loginUser); verr == nil {
+		step("verify_certificate_login", "ok", "cert login via jump host: "+oneLine(id))
+	} else {
+		// Non-fatal in the local userspace-WireGuard fabric where the overlay
+		// data plane is limited; configuration is applied either way.
+		step("verify_certificate_login", "skipped", verr.Error())
+	}
+
 	_ = s.store.FinishEnrollmentJob(ctx, job.ID, "succeeded", "")
 	_, _ = s.store.AppendAudit(ctx, models.AuditEvent{
 		ActorID: actor, Action: "host.enroll", TargetKind: "host", TargetID: host.ID.String(),
-		Detail: map[string]any{"wgAddress": wgIP, "hostPublicKey": hostPub, "jobId": job.ID},
+		Detail: map[string]any{"wgAddress": wgIP, "hostPublicKey": hostPub, "method": params.method(), "jobId": job.ID},
 	})
 
 	final, _ := s.store.GetEnrollmentJob(ctx, job.ID)
 	return &Result{Job: final, WGAddr: wgIP, HostPub: hostPub}, nil
+}
+
+// validateCertLogin connects to the host through the jump host using the
+// session's per-user certificate and runs `id`, proving the full path works.
+func (s *Service) validateCertLogin(ctx context.Context, sessionID uuid.UUID, wgIP, mgmtAddr string, port int, user string) (string, error) {
+	for _, addr := range []string{wgIP, mgmtAddr} {
+		if addr == "" {
+			continue
+		}
+		conn, err := s.gw.Dial(ctx, sessionID.String(), addr, port, user)
+		if err != nil {
+			continue
+		}
+		out, rerr := run(conn.Client, "id")
+		conn.Close()
+		if rerr == nil {
+			return out, nil
+		}
+	}
+	return "", fmt.Errorf("certificate login not reachable yet")
 }
 
 // hostWGScript renders the script that configures WireGuard on the managed host.
@@ -169,7 +260,10 @@ mkdir -p /etc/wireguard; umask 077
 [ -f /etc/wireguard/$IF.key ] || wg genkey > /etc/wireguard/$IF.key
 PRIV=$(cat /etc/wireguard/$IF.key)
 PUB=$(printf '%%s' "$PRIV" | wg pubkey)
-if ! ip link show $IF >/dev/null 2>&1; then wireguard-go $IF; sleep 1; fi
+if ! ip link show $IF >/dev/null 2>&1; then
+  ip link add dev $IF type wireguard 2>/dev/null || { command -v wireguard-go >/dev/null 2>&1 && wireguard-go $IF; sleep 1; }
+fi
+ip link show $IF >/dev/null 2>&1 || { echo "no wireguard interface available"; exit 1; }
 printf '%%s' "$PRIV" | wg set $IF private-key /dev/stdin listen-port $PORT
 wg set $IF peer "$JPUB" endpoint "$JEP" allowed-ips $SUBNET persistent-keepalive 25
 ip addr flush dev $IF 2>/dev/null || true
@@ -207,22 +301,77 @@ echo OK`,
 		iface, hostPub, hostEndpoint, wgIP, sanitize(hostname), hostPub, hostEndpoint, wgIP)
 }
 
-func (s *Service) waitHandshake(client *ssh.Client) bool {
-	// Poke the tunnel so WireGuard initiates a handshake immediately rather than
-	// waiting for the persistent-keepalive interval.
-	_, _ = run(client, fmt.Sprintf("ping -c1 -W1 %s >/dev/null 2>&1 || true", s.cfg.WGJumpIP))
-	// WireGuard initiates the first handshake on its persistent-keepalive timer
-	// (~25s), so poll comfortably past that.
-	for i := 0; i < 16; i++ {
-		out, err := run(client, "wg show "+s.cfg.WGInterface+" latest-handshakes 2>/dev/null | awk '{print $2}' | sort -rn | head -1")
-		if err == nil {
-			if v := strings.TrimSpace(out); v != "" && v != "0" {
-				return true
-			}
-		}
-		time.Sleep(2 * time.Second)
+// caTrustScript installs the Fleet user CA, creates the login user with sudo and
+// the principal mapping, configures sshd to trust certificates, and reloads sshd.
+func (s *Service) caTrustScript(loginUser, caKeys string) string {
+	return fmt.Sprintf(`set -e
+LOGIN=%s
+# Login account that per-user certificates map to (shared account, unique certs).
+id "$LOGIN" >/dev/null 2>&1 || useradd -m -s /bin/bash "$LOGIN" 2>/dev/null || adduser -D "$LOGIN" 2>/dev/null || true
+mkdir -p /etc/sudoers.d && printf '%%s ALL=(ALL) NOPASSWD:ALL\n' "$LOGIN" > /etc/sudoers.d/fleet && chmod 0440 /etc/sudoers.d/fleet
+# Trust the Fleet user CA.
+cat > /etc/ssh/fleet_ca.pub <<'CAEOF'
+%s
+CAEOF
+chmod 644 /etc/ssh/fleet_ca.pub
+mkdir -p /etc/ssh/auth_principals && printf 'fleet\n' > /etc/ssh/auth_principals/"$LOGIN"
+# sshd: prefer a drop-in; also append directly if the main config has no Include.
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/00-fleet.conf <<'SSHEOF'
+PubkeyAuthentication yes
+TrustedUserCAKeys /etc/ssh/fleet_ca.pub
+AuthorizedPrincipalsFile /etc/ssh/auth_principals/%%u
+SSHEOF
+if ! grep -q 'sshd_config.d' /etc/ssh/sshd_config 2>/dev/null && ! grep -q 'TrustedUserCAKeys /etc/ssh/fleet_ca.pub' /etc/ssh/sshd_config 2>/dev/null; then
+  { echo ''; echo '# Fleet Terminal'; echo 'PubkeyAuthentication yes'; echo 'TrustedUserCAKeys /etc/ssh/fleet_ca.pub'; echo 'AuthorizedPrincipalsFile /etc/ssh/auth_principals/%%u'; } >> /etc/ssh/sshd_config
+fi
+mkdir -p /run/sshd
+sshd -t
+( systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || service sshd reload 2>/dev/null || service ssh reload 2>/dev/null || pkill -HUP sshd 2>/dev/null ) || true
+echo CA_OK`,
+		loginUser, caKeys)
+}
+
+// wgInstallScript installs WireGuard tooling via the host's package manager if
+// the `wg` command is not already present.
+const wgInstallScript = `set -e
+if ! command -v wg >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y -qq wireguard-tools >/dev/null 2>&1 || apt-get install -y -qq wireguard >/dev/null 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y -q wireguard-tools >/dev/null 2>&1 || { dnf install -y -q epel-release >/dev/null 2>&1; dnf install -y -q wireguard-tools >/dev/null 2>&1; } || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y -q wireguard-tools >/dev/null 2>&1 || true
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache wireguard-tools >/dev/null 2>&1 || true
+  fi
+fi
+command -v wg >/dev/null 2>&1 && echo WG_INSTALLED || echo WG_MISSING`
+
+// privRun executes a script with privilege. As root it runs directly; otherwise
+// via sudo, piping the bootstrap password to `sudo -S` when one is supplied.
+func privRun(client *ssh.Client, isRoot bool, password, script string) (string, error) {
+	if isRoot {
+		return run(client, "sh -c "+shellQuote(script))
 	}
-	return false
+	if password != "" {
+		return runWithInput(client, "sudo -S -p '' sh -c "+shellQuote(script), password+"\n")
+	}
+	return run(client, "sudo sh -c "+shellQuote(script))
+}
+
+// runWithInput runs a command, writing input to its stdin (used for sudo -S).
+func runWithInput(client *ssh.Client, cmd, input string) (string, error) {
+	sess, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer sess.Close()
+	sess.Stdin = strings.NewReader(input)
+	out, err := sess.CombinedOutput(cmd)
+	return string(out), err
 }
 
 func (s *Service) recordFacts(ctx context.Context, hostID uuid.UUID, facts string) {

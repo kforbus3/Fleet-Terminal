@@ -29,6 +29,12 @@ type handler struct {
 	svc *Service
 }
 
+type enrollReq struct {
+	Method        string `json:"method"`        // "password" | "trusted"
+	BootstrapUser string `json:"bootstrapUser"` // SSH user for password bootstrap
+	Password      string `json:"password"`      // SSH/sudo password for bootstrap
+}
+
 func (h *handler) enroll(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r)
 	hostID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -41,7 +47,15 @@ func (h *handler) enroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "host not found")
 		return
 	}
-	res, err := h.svc.Enroll(r.Context(), p.SessionID, host, &p.UserID)
+	var req enrollReq
+	_ = json.NewDecoder(r.Body).Decode(&req) // body optional; defaults to trusted
+	if req.Method == "password" && req.Password == "" {
+		writeError(w, http.StatusBadRequest, "password is required for password bootstrap")
+		return
+	}
+	res, err := h.svc.Enroll(r.Context(), p.SessionID, host, &p.UserID, EnrollParams{
+		Method: req.Method, BootstrapUser: req.BootstrapUser, Password: req.Password,
+	})
 	if err != nil {
 		// Surface the failed job so the UI can show which step failed.
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})

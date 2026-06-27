@@ -18,8 +18,11 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createHost, deleteHost, enrollHost, listHosts, nextWGAddress,
-  type EnrollmentResult, type Host, type HostInput,
+  type EnrollmentResult, type EnrollParams, type Host, type HostInput,
 } from "../api/hosts";
+import {
+  FormControl, FormControlLabel, FormLabel, Radio, RadioGroup,
+} from "@mui/material";
 
 const STATUS_COLOR: Record<string, "success" | "error" | "warning" | "default"> = {
   online: "success",
@@ -182,6 +185,7 @@ export function HostsPage() {
   const [enrollResult, setEnrollResult] = useState<EnrollmentResult | null>(null);
   const [enrollError, setEnrollError] = useState<string | null>(null);
   const [enrollOpen, setEnrollOpen] = useState(false);
+  const [enrollTarget, setEnrollTarget] = useState<Host | null>(null);
 
   const createMut = useMutation({
     mutationFn: createHost,
@@ -192,8 +196,9 @@ export function HostsPage() {
   });
 
   const enrollMut = useMutation({
-    mutationFn: enrollHost,
+    mutationFn: ({ id, params }: { id: string; params: EnrollParams }) => enrollHost(id, params),
     onMutate: () => {
+      setEnrollTarget(null);
       setEnrollOpen(true);
       setEnrollResult(null);
       setEnrollError(null);
@@ -289,7 +294,7 @@ export function HostsPage() {
                 size="small"
                 color={params.row.enrolled ? "success" : "primary"}
                 disabled={enrollMut.isPending}
-                onClick={() => enrollMut.mutate(params.row.id)}
+                onClick={() => setEnrollTarget(params.row)}
               >
                 <CableIcon fontSize="small" />
               </IconButton>
@@ -348,6 +353,11 @@ export function HostsPage() {
         onSubmit={(input) => createMut.mutate(input)}
         submitting={createMut.isPending}
       />
+      <EnrollCredsDialog
+        host={enrollTarget}
+        onClose={() => setEnrollTarget(null)}
+        onSubmit={(params) => enrollTarget && enrollMut.mutate({ id: enrollTarget.id, params })}
+      />
       <EnrollDialog
         open={enrollOpen}
         pending={enrollMut.isPending}
@@ -356,6 +366,70 @@ export function HostsPage() {
         onClose={() => setEnrollOpen(false)}
       />
     </Box>
+  );
+}
+
+// EnrollCredsDialog collects how to reach the host for the initial bootstrap:
+// an SSH password (installs CA trust + WireGuard on a brand-new host), or the
+// session certificate when the host already trusts the Fleet CA.
+function EnrollCredsDialog({
+  host, onClose, onSubmit,
+}: {
+  host: Host | null;
+  onClose: () => void;
+  onSubmit: (params: EnrollParams) => void;
+}) {
+  const [method, setMethod] = useState<"password" | "trusted">("password");
+  const [bootstrapUser, setBootstrapUser] = useState("root");
+  const [password, setPassword] = useState("");
+
+  return (
+    <Dialog open={Boolean(host)} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Enroll {host?.hostname}</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
+          Enrollment installs the SSH CA trust and WireGuard on the host, joins it to the
+          VPN overlay, and verifies per-user certificate login through the jump host.
+        </Typography>
+        <FormControl sx={{ mb: 2 }}>
+          <FormLabel>How should we reach this host first?</FormLabel>
+          <RadioGroup value={method} onChange={(e) => setMethod(e.target.value as "password" | "trusted")}>
+            <FormControlLabel
+              value="password" control={<Radio />}
+              label="SSH password — install everything (new/existing host with no setup)"
+            />
+            <FormControlLabel
+              value="trusted" control={<Radio />}
+              label="Host already trusts the Fleet CA (re-provision only)"
+            />
+          </RadioGroup>
+        </FormControl>
+        {method === "password" && (
+          <Stack spacing={2}>
+            <TextField
+              label="SSH user" value={bootstrapUser}
+              onChange={(e) => setBootstrapUser(e.target.value)}
+              helperText="A user with sudo, or root"
+            />
+            <TextField
+              label="SSH password" type="password" value={password}
+              onChange={(e) => setPassword(e.target.value)} autoFocus
+              helperText="Used once to bootstrap trust; never stored"
+            />
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="contained"
+          disabled={method === "password" && password === ""}
+          onClick={() => onSubmit({ method, bootstrapUser, password })}
+        >
+          Enroll
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
