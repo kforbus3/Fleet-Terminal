@@ -15,12 +15,12 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ permission, children }: ProtectedRouteProps) {
   const user = useAuthStore((s) => s.user);
   const loaded = useAuthStore((s) => s.loaded);
-  const loadMe = useAuthStore((s) => s.loadMe);
+  const restore = useAuthStore((s) => s.restore);
   const has = useAuthStore((s) => s.has);
 
   useEffect(() => {
-    if (!loaded) void loadMe();
-  }, [loaded, loadMe]);
+    if (!loaded) void restore();
+  }, [loaded, restore]);
 
   if (!loaded) {
     return (

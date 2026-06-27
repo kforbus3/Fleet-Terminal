@@ -3,7 +3,9 @@ import { useParams } from "react-router-dom";
 import { Box, Chip, Stack, Typography } from "@mui/material";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "../store/auth";
+import { getHost } from "../api/hosts";
 
 type Status = "connecting" | "connected" | "closed" | "error";
 
@@ -16,6 +18,18 @@ export function TerminalPage() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
+
+  const { data: host } = useQuery({
+    queryKey: ["host", hostId],
+    queryFn: () => getHost(hostId!),
+    enabled: !!hostId,
+  });
+  const hostname = host?.hostname ?? "";
+
+  // Reflect the host in the browser tab title.
+  useEffect(() => {
+    if (hostname) document.title = `${hostname} — Fleet Terminal`;
+  }, [hostname]);
 
   useEffect(() => {
     if (!containerRef.current || !hostId || !accessToken) return;
@@ -80,15 +94,21 @@ export function TerminalPage() {
     status === "connected" ? "success" : status === "connecting" ? "warning" : "error";
 
   return (
-    <Box>
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
-        <Typography variant="h6">Terminal</Typography>
+    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", bgcolor: "#0d1117" }}>
+      <Stack
+        direction="row" spacing={2} alignItems="center"
+        sx={{ px: 2, py: 1, bgcolor: "#161b22", borderBottom: "1px solid #30363d" }}
+      >
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: "#e6edf3" }}>
+          {hostname || "Terminal"}
+        </Typography>
         <Chip size="small" label={status} color={color} />
+        <Box sx={{ flexGrow: 1 }} />
+        <Typography variant="caption" sx={{ color: "#8b949e" }}>
+          SSH via jump host · per-user certificate
+        </Typography>
       </Stack>
-      <Box
-        ref={containerRef}
-        sx={{ height: "calc(100vh - 160px)", bgcolor: "#0d1117", p: 1, borderRadius: 1 }}
-      />
+      <Box ref={containerRef} sx={{ flexGrow: 1, p: 1, overflow: "hidden" }} />
     </Box>
   );
 }

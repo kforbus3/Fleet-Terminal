@@ -75,6 +75,15 @@ tidy: ## Run go mod tidy and write go.sum back to the repo
 	docker run --rm -v $(PWD)/backend:/src -w /src golang:1.23-alpine \
 	  sh -c "apk add --no-cache git >/dev/null && go mod tidy"
 
+.PHONY: e2e
+e2e: ## Run Playwright end-to-end tests against the running stack
+	-$(COMPOSE_FABRIC) exec -T backend fleetctl create-admin e2euser 'E2e-Pass-12345!' 2>/dev/null
+	docker run --rm --network host -v $(PWD)/frontend:/app -w /app \
+	  -e E2E_BASE=$${E2E_BASE:-http://localhost:5173} \
+	  -e E2E_USER=e2euser -e E2E_PASS='E2e-Pass-12345!' \
+	  mcr.microsoft.com/playwright:v1.48.2-jammy \
+	  sh -c "npm install >/dev/null 2>&1 && npx playwright test"
+
 .PHONY: load
 load: ## Run the k6 load smoke test against the running stack (override USER/PASS)
 	docker run --rm --network host -v $(PWD)/deploy/load:/load \

@@ -278,8 +278,11 @@ export function HostsPage() {
       field: "actions", headerName: "Actions", width: 190, sortable: false, filterable: false,
       renderCell: (params) => (
         <Stack direction="row" spacing={0.5}>
-          <Tooltip title="Open terminal">
-            <IconButton size="small" color="primary" onClick={() => navigate(`/terminals/${params.row.id}`)}>
+          <Tooltip title="Open terminal in a new tab">
+            <IconButton
+              size="small" color="primary"
+              onClick={() => window.open(`/terminals/${params.row.id}`, "_blank", "noopener")}
+            >
               <TerminalIcon fontSize="small" />
             </IconButton>
           </Tooltip>

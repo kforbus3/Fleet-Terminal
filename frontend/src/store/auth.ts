@@ -17,6 +17,9 @@ interface AuthState {
   verifyPasskey: (challenge: string) => Promise<void>;
   logout: () => Promise<void>;
   loadMe: () => Promise<void>;
+  // restore re-establishes the session from the refresh cookie when there is no
+  // in-memory access token (new tab / reload), then loads the profile.
+  restore: () => Promise<void>;
   has: (perm: string) => boolean;
 }
 
@@ -68,6 +71,19 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         loaded: true,
       });
     }
+  },
+
+  restore: async () => {
+    if (!get().accessToken) {
+      try {
+        const res = await authApi.refreshSession();
+        setAccessToken(res.accessToken ?? null);
+        set({ accessToken: res.accessToken ?? null });
+      } catch {
+        /* no valid refresh cookie — loadMe will mark unauthenticated */
+      }
+    }
+    await get().loadMe();
   },
 
   loadMe: async () => {

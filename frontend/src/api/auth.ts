@@ -39,6 +39,13 @@ export interface MfaMethod {
   createdAt: string;
 }
 
+// refreshSession exchanges the HttpOnly refresh cookie for a new access token.
+// Used to restore a session in a freshly-opened tab or after a reload.
+export async function refreshSession(): Promise<LoginResponse> {
+  const { data } = await api.post<LoginResponse>("/api/v1/auth/refresh");
+  return data;
+}
+
 export async function mfaVerify(challenge: string, code: string): Promise<LoginResponse> {
   const { data } = await api.post<LoginResponse>("/api/v1/auth/mfa/verify", { challenge, code });
   return data;

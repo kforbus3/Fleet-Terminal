@@ -35,11 +35,16 @@ export function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/bootstrap" element={<BootstrapPage />} />
 
+        {/* Standalone full-screen terminal — opened in its own browser tab. */}
+        <Route
+          path="/terminals/:hostId"
+          element={<ProtectedRoute permission="Host.Connect"><TerminalPage /></ProtectedRoute>}
+        />
+
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route index element={<DashboardPage />} />
             <Route path="hosts" element={<ProtectedRoute permission="Host.View"><HostsPage /></ProtectedRoute>} />
-            <Route path="terminals/:hostId" element={<ProtectedRoute permission="Host.Connect"><TerminalPage /></ProtectedRoute>} />
             <Route path="files/:hostId" element={<ProtectedRoute permission="File.Transfer"><FilesPage /></ProtectedRoute>} />
             <Route path="sessions" element={<ProtectedRoute permission="Session.Replay"><SessionsPage /></ProtectedRoute>} />
             <Route path="approvals" element={<ApprovalsPage />} />
