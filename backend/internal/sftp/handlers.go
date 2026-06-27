@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"archive/tar"
 	"net/http"
 	"path"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -32,6 +34,7 @@ func Mount(r chi.Router, d *app.Deps, gw *sshgw.Gateway) {
 		pr.Use(d.Auth.RequireAuth)
 		pr.With(d.Auth.RequirePermission("File.Transfer")).Get("/hosts/{id}/sftp/list", h.list)
 		pr.With(d.Auth.RequirePermission("File.Transfer")).Get("/hosts/{id}/sftp/download", h.download)
+		pr.With(d.Auth.RequirePermission("File.Transfer")).Get("/hosts/{id}/sftp/download-dir", h.downloadDir)
 		pr.With(d.Auth.RequirePermission("File.Transfer")).Post("/hosts/{id}/sftp/upload", h.upload)
 		pr.With(d.Auth.RequirePermission("File.Transfer")).Get("/hosts/{id}/sftp/transfers", h.transfers)
 	})
@@ -168,6 +171,57 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, p, "sftp.download", host.ID, remote, n)
 }
 
+// downloadDir streams a remote directory as a tar archive (recursive). Files are
+// streamed one at a time so arbitrarily large trees never buffer in memory.
+func (h *handler) downloadDir(w http.ResponseWriter, r *http.Request) {
+	client, conn, p, host, ok := h.connect(w, r)
+	if !ok {
+		return
+	}
+	defer conn.Close()
+	defer client.Close()
+
+	root := r.URL.Query().Get("path")
+	if root == "" {
+		writeError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	base := path.Base(root)
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", base+".tar"))
+
+	tw := tar.NewWriter(w)
+	defer tw.Close()
+	var total int64
+	walker := client.Walk(root)
+	for walker.Step() {
+		if walker.Err() != nil {
+			continue
+		}
+		info := walker.Stat()
+		rel := strings.TrimPrefix(strings.TrimPrefix(walker.Path(), root), "/")
+		name := path.Join(base, rel)
+		if info.IsDir() {
+			_ = tw.WriteHeader(&tar.Header{Name: name + "/", Mode: int64(info.Mode().Perm()), Typeflag: tar.TypeDir, ModTime: info.ModTime()})
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: int64(info.Mode().Perm()), Size: info.Size(), ModTime: info.ModTime()}); err != nil {
+			return
+		}
+		f, err := client.Open(walker.Path())
+		if err != nil {
+			continue
+		}
+		n, _ := io.Copy(tw, f)
+		_ = f.Close()
+		total += n
+	}
+	h.audit(r, p, "sftp.download_dir", host.ID, root, total)
+}
+
 func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
 	client, conn, p, host, ok := h.connect(w, r)
 	if !ok {
@@ -182,7 +236,17 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "path and name required")
 		return
 	}
-	remote := path.Join(dir, path.Base(name))
+	// name may include a relative subpath (folder uploads). Sanitize it to stay
+	// inside dir — reject absolute paths and any ".." traversal.
+	rel := strings.TrimPrefix(path.Clean("/"+name), "/")
+	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
+		writeError(w, http.StatusBadRequest, "invalid file name")
+		return
+	}
+	remote := path.Join(dir, rel)
+	if parent := path.Dir(remote); parent != "" && parent != "." {
+		_ = client.MkdirAll(parent) // create intermediate directories for folder uploads
+	}
 	dst, err := client.Create(remote)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "create: "+err.Error())

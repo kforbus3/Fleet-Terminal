@@ -10,8 +10,9 @@ import DownloadIcon from "@mui/icons-material/Download";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import CloseIcon from "@mui/icons-material/Close";
+import DriveFolderUploadIcon from "@mui/icons-material/DriveFolderUpload";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { downloadFile, listDir, uploadFile } from "../api/sftp";
+import { downloadDir, downloadFile, listDir, uploadFile } from "../api/sftp";
 import { getHost } from "../api/hosts";
 
 interface Transfer {
@@ -20,7 +21,8 @@ interface Transfer {
   dir: "up" | "down";
   loaded: number;
   total: number;
-  status: "active" | "done" | "error";
+  status: "active" | "done" | "error" | "cancelled";
+  controller: AbortController;
 }
 
 // SFTP file browser. All transfers are brokered by the backend through the SSH
@@ -34,6 +36,13 @@ export function FilesPage() {
   const [dragOver, setDragOver] = useState(false);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const folderInput = useRef<HTMLInputElement | null>(null);
+
+  // webkitdirectory isn't a typed React prop; set it on the element directly.
+  useEffect(() => {
+    folderInput.current?.setAttribute("webkitdirectory", "");
+    folderInput.current?.setAttribute("directory", "");
+  }, []);
 
   const { data: host } = useQuery({
     queryKey: ["host", hostId],
@@ -52,34 +61,43 @@ export function FilesPage() {
 
   const resolved = data?.path ?? path;
 
-  const addTransfer = (name: string, dir: "up" | "down"): string => {
+  const addTransfer = (name: string, dir: "up" | "down"): { id: string; controller: AbortController } => {
     const id = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    setTransfers((t) => [{ id, name, dir, loaded: 0, total: 0, status: "active" }, ...t]);
-    return id;
+    const controller = new AbortController();
+    setTransfers((t) => [{ id, name, dir, loaded: 0, total: 0, status: "active", controller }, ...t]);
+    return { id, controller };
   };
   const update = (id: string, loaded: number, total: number) =>
     setTransfers((t) => t.map((x) => (x.id === id ? { ...x, loaded, total } : x)));
-  const finish = (id: string, status: "done" | "error") =>
+  const finish = (id: string, status: Transfer["status"]) =>
     setTransfers((t) => t.map((x) => (x.id === id ? { ...x, status } : x)));
+  const cancel = (t: Transfer) => {
+    t.controller.abort();
+    finish(t.id, "cancelled");
+  };
+  const aborted = (e: unknown) =>
+    (e as { name?: string; code?: string })?.name === "CanceledError" ||
+    (e as { name?: string })?.name === "AbortError";
 
-  const startUpload = async (file: File) => {
-    const id = addTransfer(file.name, "up");
+  const startUpload = async (file: File, name: string) => {
+    const { id, controller } = addTransfer(name, "up");
     try {
-      await uploadFile(hostId!, resolved, file, (l, tot) => update(id, l, tot));
+      await uploadFile(hostId!, resolved, file, name, (l, tot) => update(id, l, tot), controller.signal);
       finish(id, "done");
       void qc.invalidateQueries({ queryKey: ["sftp", hostId] });
-    } catch {
-      finish(id, "error");
+    } catch (e) {
+      finish(id, aborted(e) ? "cancelled" : "error");
     }
   };
 
-  const startDownload = async (remote: string, name: string) => {
-    const id = addTransfer(name, "down");
+  const startDownload = async (remote: string, name: string, isDir: boolean) => {
+    const { id, controller } = addTransfer(isDir ? `${name}.tar` : name, "down");
     try {
-      await downloadFile(hostId!, remote, (l, tot) => update(id, l, tot));
+      const fn = isDir ? downloadDir : downloadFile;
+      await fn(hostId!, remote, (l, tot) => update(id, l, tot), controller.signal);
       finish(id, "done");
-    } catch {
-      finish(id, "error");
+    } catch (e) {
+      finish(id, aborted(e) ? "cancelled" : "error");
     }
   };
 
@@ -88,7 +106,8 @@ export function FilesPage() {
 
   const onFiles = (files: FileList | null) => {
     if (!files) return;
-    Array.from(files).forEach((f) => void startUpload(f));
+    // Folder uploads carry a relative subpath; the backend recreates the tree.
+    Array.from(files).forEach((f) => void startUpload(f, f.webkitRelativePath || f.name));
   };
 
   return (
@@ -106,11 +125,21 @@ export function FilesPage() {
             startIcon={<UploadFileIcon />} variant="contained" size="small"
             onClick={() => fileInput.current?.click()}
           >
-            Upload
+            Upload files
+          </Button>
+          <Button
+            startIcon={<DriveFolderUploadIcon />} variant="outlined" size="small"
+            onClick={() => folderInput.current?.click()}
+          >
+            Upload folder
           </Button>
           <input
             ref={fileInput} type="file" multiple hidden
-            onChange={(e) => onFiles(e.target.files)}
+            onChange={(e) => { onFiles(e.target.files); e.target.value = ""; }}
+          />
+          <input
+            ref={folderInput} type="file" multiple hidden
+            onChange={(e) => { onFiles(e.target.files); e.target.value = ""; }}
           />
         </Stack>
       </Stack>
@@ -141,8 +170,13 @@ export function FilesPage() {
                     <Typography variant="caption" color="text.secondary">
                       {t.status === "active"
                         ? `${formatBytes(t.loaded)}${t.total ? " / " + formatBytes(t.total) : ""}${t.total ? ` (${pct}%)` : ""}`
-                        : t.status === "done" ? "done" : "failed"}
+                        : t.status}
                     </Typography>
+                    {t.status === "active" && (
+                      <IconButton size="small" onClick={() => cancel(t)} title="Cancel">
+                        <CloseIcon fontSize="small" />
+                      </IconButton>
+                    )}
                   </Stack>
                   <LinearProgress
                     variant={t.status === "active" && t.total > 0 ? "determinate" : t.status === "active" ? "indeterminate" : "determinate"}
@@ -167,11 +201,15 @@ export function FilesPage() {
             <ListItem
               key={e.name}
               secondaryAction={
-                !e.isDir && (
-                  <IconButton edge="end" onClick={() => void startDownload(resolved.replace(/\/$/, "") + "/" + e.name, e.name)}>
-                    <DownloadIcon />
-                  </IconButton>
-                )
+                <IconButton
+                  edge="end"
+                  title={e.isDir ? "Download folder as .tar" : "Download"}
+                  onClick={() =>
+                    void startDownload(resolved.replace(/\/$/, "") + "/" + e.name, e.name, e.isDir)
+                  }
+                >
+                  <DownloadIcon />
+                </IconButton>
               }
               disablePadding
             >
@@ -192,7 +230,8 @@ export function FilesPage() {
         </List>
       </Paper>
       <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
-        Drag files here to upload. All transfers are audited.
+        Drag files here to upload, or use “Upload folder” for whole directories. Folders download
+        as a .tar archive. All transfers are audited and can be cancelled.
       </Typography>
     </Box>
   );

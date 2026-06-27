@@ -22,18 +22,21 @@ export async function listDir(hostId: string, path: string): Promise<SftpListing
   return data;
 }
 
-// uploadFile streams a file to the host with upload progress. The browser reads
-// the file from disk as it sends, so arbitrarily large files are supported.
+// uploadFile streams a file to the host with progress. `name` may include a
+// relative subpath (folder uploads); the backend creates intermediate dirs.
 export async function uploadFile(
   hostId: string,
   dir: string,
   file: File,
+  name: string,
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<void> {
   await api.post(`/api/v1/hosts/${hostId}/sftp/upload`, file, {
-    params: { path: dir, name: file.name },
+    params: { path: dir, name },
     headers: { "Content-Type": "application/octet-stream" },
     onUploadProgress: (e) => onProgress?.(e.loaded, e.total ?? file.size),
+    signal,
   });
 }
 
@@ -41,24 +44,22 @@ interface SavePickerWindow {
   showSaveFilePicker?: (opts: { suggestedName?: string }) => Promise<FileSystemFileHandle>;
 }
 
-// downloadFile streams a file from the host with progress. When the File System
-// Access API is available (Chromium), it streams straight to disk so multi-GB
-// files never sit in browser memory; otherwise it falls back to a Blob.
-export async function downloadFile(
-  hostId: string,
-  path: string,
+// streamToDisk fetches url and writes the response to disk. With the File System
+// Access API it streams straight to the chosen file (no memory cap); otherwise
+// it falls back to a Blob. Reports progress when Content-Length is known.
+async function streamToDisk(
+  url: string,
+  suggestedName: string,
   onProgress?: ProgressFn,
+  signal?: AbortSignal,
 ): Promise<void> {
   const token = getAccessToken();
-  const url = `/api/v1/hosts/${hostId}/sftp/download?path=${encodeURIComponent(path)}`;
   const res = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     credentials: "include",
+    signal,
   });
-  if (!res.ok || !res.body) {
-    throw new Error(`download failed: ${res.status}`);
-  }
-  const filename = path.split("/").pop() ?? "download";
+  if (!res.ok || !res.body) throw new Error(`download failed: ${res.status}`);
   const total = Number(res.headers.get("Content-Length") ?? 0);
   const reader = res.body.getReader();
   let received = 0;
@@ -67,24 +68,26 @@ export async function downloadFile(
   if (picker) {
     let handle: FileSystemFileHandle;
     try {
-      handle = await picker({ suggestedName: filename });
+      handle = await picker({ suggestedName });
     } catch {
       await reader.cancel();
       return; // user cancelled the save dialog
     }
     const writable = await handle.createWritable();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      await writable.write(value);
-      received += value.byteLength;
-      onProgress?.(received, total);
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await writable.write(value);
+        received += value.byteLength;
+        onProgress?.(received, total);
+      }
+    } finally {
+      await writable.close();
     }
-    await writable.close();
     return;
   }
 
-  // Fallback: accumulate to a Blob (memory-bound; fine for moderate files).
   const chunks: BlobPart[] = [];
   for (;;) {
     const { done, value } = await reader.read();
@@ -96,9 +99,31 @@ export async function downloadFile(
   const blobUrl = URL.createObjectURL(new Blob(chunks));
   const a = document.createElement("a");
   a.href = blobUrl;
-  a.download = filename;
+  a.download = suggestedName;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(blobUrl);
+}
+
+export function downloadFile(
+  hostId: string,
+  path: string,
+  onProgress?: ProgressFn,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/v1/hosts/${hostId}/sftp/download?path=${encodeURIComponent(path)}`;
+  return streamToDisk(url, path.split("/").pop() ?? "download", onProgress, signal);
+}
+
+// downloadDir streams a remote directory as a .tar archive (recursive).
+export function downloadDir(
+  hostId: string,
+  path: string,
+  onProgress?: ProgressFn,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/v1/hosts/${hostId}/sftp/download-dir?path=${encodeURIComponent(path)}`;
+  const base = path.split("/").filter(Boolean).pop() ?? "archive";
+  return streamToDisk(url, `${base}.tar`, onProgress, signal);
 }
