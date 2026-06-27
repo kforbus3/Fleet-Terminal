@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
-import { Box, Chip, Stack, Typography } from "@mui/material";
+import { useNavigate, useParams } from "react-router-dom";
+import { Box, Button, Chip, Stack, Typography } from "@mui/material";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { useQuery } from "@tanstack/react-query";
@@ -15,6 +16,7 @@ type Status = "connecting" | "connected" | "closed" | "error";
 // holds SSH keys or certificates.
 export function TerminalPage() {
   const { hostId } = useParams<{ hostId: string }>();
+  const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
@@ -99,6 +101,12 @@ export function TerminalPage() {
         direction="row" spacing={2} alignItems="center"
         sx={{ px: 2, py: 1, bgcolor: "#161b22", borderBottom: "1px solid #30363d" }}
       >
+        <Button
+          size="small" startIcon={<ArrowBackIcon />} onClick={() => navigate("/hosts")}
+          sx={{ color: "#c9d1d9", borderColor: "#30363d" }} variant="outlined"
+        >
+          Hosts
+        </Button>
         <Typography variant="subtitle1" sx={{ fontWeight: 600, color: "#e6edf3" }}>
           {hostname || "Terminal"}
         </Typography>

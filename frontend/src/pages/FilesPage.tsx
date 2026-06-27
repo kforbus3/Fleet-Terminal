@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   Alert, Box, Breadcrumbs, Button, Chip, IconButton, LinearProgress, Link, List,
   ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, Typography,
@@ -11,6 +11,7 @@ import UploadFileIcon from "@mui/icons-material/UploadFile";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import CloseIcon from "@mui/icons-material/Close";
 import DriveFolderUploadIcon from "@mui/icons-material/DriveFolderUpload";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { downloadDir, downloadFile, listDir, uploadFile } from "../api/sftp";
 import { getHost } from "../api/hosts";
@@ -31,6 +32,7 @@ interface Transfer {
 // never sit in memory; both show progress.
 export function FilesPage() {
   const { hostId } = useParams<{ hostId: string }>();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [path, setPath] = useState(".");
   const [dragOver, setDragOver] = useState(false);
@@ -118,7 +120,12 @@ export function FilesPage() {
       onDrop={(e) => { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files); }}
     >
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
-        <Typography variant="h5">Files{host?.hostname ? ` · ${host.hostname}` : ""}</Typography>
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/hosts")} size="small" variant="outlined">
+            Hosts
+          </Button>
+          <Typography variant="h5">Files{host?.hostname ? ` · ${host.hostname}` : ""}</Typography>
+        </Stack>
         <Stack direction="row" spacing={1}>
           <Button startIcon={<ArrowUpwardIcon />} onClick={goUp} size="small">Up</Button>
           <Button

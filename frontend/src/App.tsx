@@ -20,6 +20,8 @@ import { TerminalPage } from "./pages/TerminalPage";
 import { FilesPage } from "./pages/FilesPage";
 import { SecurityPage } from "./pages/SecurityPage";
 import { JobsPage } from "./pages/JobsPage";
+import { EnrollmentPage } from "./pages/EnrollmentPage";
+import { CertificatesPage } from "./pages/CertificatesPage";
 
 // Root component. Public routes (login, bootstrap) sit outside the guarded
 // AppLayout; every other route requires authentication and, where relevant, a
@@ -55,6 +57,8 @@ export function App() {
             <Route path="users" element={<ProtectedRoute permission="User.Edit"><UsersPage /></ProtectedRoute>} />
             <Route path="roles" element={<ProtectedRoute permission="Role.Edit"><RolesPage /></ProtectedRoute>} />
             <Route path="groups" element={<ProtectedRoute permission="Group.Edit"><GroupsPage /></ProtectedRoute>} />
+            <Route path="enrollment" element={<ProtectedRoute permission="Host.Enroll"><EnrollmentPage /></ProtectedRoute>} />
+            <Route path="certificates" element={<ProtectedRoute permission="Certificate.Manage"><CertificatesPage /></ProtectedRoute>} />
             <Route path="security" element={<SecurityPage />} />
             <Route path="jobs" element={<ProtectedRoute permission="System.Configure"><JobsPage /></ProtectedRoute>} />
             <Route path="settings" element={<ProtectedRoute permission="System.Configure"><SettingsPage /></ProtectedRoute>} />
