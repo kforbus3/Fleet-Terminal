@@ -74,3 +74,11 @@ lint: ## Run Go vet
 tidy: ## Run go mod tidy and write go.sum back to the repo
 	docker run --rm -v $(PWD)/backend:/src -w /src golang:1.23-alpine \
 	  sh -c "apk add --no-cache git >/dev/null && go mod tidy"
+
+.PHONY: load
+load: ## Run the k6 load smoke test against the running stack (override USER/PASS)
+	docker run --rm --network host -v $(PWD)/deploy/load:/load \
+	  -e BASE=$${BASE:-http://localhost:8080} \
+	  -e USER=$${FLEET_LOAD_USER:-admin} \
+	  -e PASS=$${FLEET_LOAD_PASS:-Sup3r-Secret-Pass!} \
+	  grafana/k6 run /load/k6-smoke.js
