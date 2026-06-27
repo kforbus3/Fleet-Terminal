@@ -80,10 +80,10 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 func (h *handler) nextWG(w http.ResponseWriter, r *http.Request) {
 	next, err := h.d.Store.NextFreeWGAddress(r.Context(), h.d.Cfg.WGJumpIP)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"nextWgAddress": "", "subnet": h.d.Cfg.WGSubnet, "exhausted": true})
+		writeJSON(w, http.StatusOK, map[string]any{"nextWgAddress": "", "subnet": h.d.Cfg.WGSubnet, "jumpEndpoint": h.d.Cfg.WGJumpEndpoint, "exhausted": true})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"nextWgAddress": next, "subnet": h.d.Cfg.WGSubnet})
+	writeJSON(w, http.StatusOK, map[string]any{"nextWgAddress": next, "subnet": h.d.Cfg.WGSubnet, "jumpEndpoint": h.d.Cfg.WGJumpEndpoint})
 }
 
 func (h *handler) statusStats(w http.ResponseWriter, r *http.Request) {

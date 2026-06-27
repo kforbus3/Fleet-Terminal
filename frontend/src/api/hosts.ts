@@ -88,6 +88,7 @@ export async function deleteHost(id: string): Promise<void> {
 export interface NextWG {
   nextWgAddress: string;
   subnet: string;
+  jumpEndpoint: string;
   exhausted?: boolean;
 }
 
@@ -126,6 +127,8 @@ export interface EnrollParams {
   password?: string;
   // sudo password, when the bootstrap user has password-required sudo.
   sudoPassword?: string;
+  // jump host's public WireGuard endpoint (host:port) the managed host dials.
+  wgEndpoint?: string;
   // Route the bootstrap SSH connection through the jump host (for hosts the
   // backend can't reach directly but the jump host can).
   viaJump?: boolean;

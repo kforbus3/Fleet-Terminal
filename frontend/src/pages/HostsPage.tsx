@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, Stack, TextField, Tooltip, Typography,
@@ -395,7 +395,14 @@ function EnrollCredsDialog({
   const [bootstrapUser, setBootstrapUser] = useState("root");
   const [password, setPassword] = useState("");
   const [sudoPassword, setSudoPassword] = useState("");
+  const [wgEndpoint, setWgEndpoint] = useState("");
   const [viaJump, setViaJump] = useState(false);
+
+  // Pre-fill the jump host's WireGuard endpoint with the configured default.
+  const { data: nextWG } = useQuery({ queryKey: ["next-wg"], queryFn: nextWGAddress, enabled: Boolean(host) });
+  useEffect(() => {
+    if (nextWG?.jumpEndpoint && wgEndpoint === "") setWgEndpoint(nextWG.jumpEndpoint);
+  }, [nextWG?.jumpEndpoint, wgEndpoint]);
 
   return (
     <Dialog open={Boolean(host)} onClose={onClose} fullWidth maxWidth="sm">
@@ -437,6 +444,12 @@ function EnrollCredsDialog({
             />
           </Stack>
         )}
+        <TextField
+          fullWidth sx={{ mt: 2 }}
+          label="Jump host WireGuard endpoint" value={wgEndpoint}
+          onChange={(e) => setWgEndpoint(e.target.value)}
+          helperText="Public address:port the HOST uses to reach the VPN server (e.g. vpn.example.com:51820). Must be resolvable from the host — not an internal Docker name."
+        />
         <FormControlLabel
           sx={{ mt: 1 }}
           control={<Checkbox checked={viaJump} onChange={(e) => setViaJump(e.target.checked)} />}
@@ -448,7 +461,7 @@ function EnrollCredsDialog({
         <Button
           variant="contained"
           disabled={method === "password" && password === ""}
-          onClick={() => onSubmit({ method, bootstrapUser, password, sudoPassword, viaJump })}
+          onClick={() => onSubmit({ method, bootstrapUser, password, sudoPassword, wgEndpoint, viaJump })}
         >
           Enroll
         </Button>

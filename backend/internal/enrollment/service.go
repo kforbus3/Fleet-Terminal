@@ -57,6 +57,10 @@ type EnrollParams struct {
 	// password-required sudo. If empty, the SSH password is reused (password
 	// method) or passwordless sudo is assumed (trusted method).
 	SudoPassword string
+	// WGEndpoint overrides the jump host's WireGuard endpoint (host:port) written
+	// into the managed host's config — i.e. the publicly-routable address the host
+	// uses to reach the VPN server. Defaults to FLEET_WG_JUMP_ENDPOINT.
+	WGEndpoint string
 	// ViaJump routes the bootstrap SSH connection through the jump host instead
 	// of connecting directly from the backend.
 	ViaJump bool
@@ -225,7 +229,13 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 
 	// 7) Bring up WireGuard on the host (kernel module preferred, userspace
 	//    wireguard-go fallback). The private key is generated on the host.
-	out, err := priv(s.hostWGScript(wgIP, jumpPub))
+	// The endpoint the managed host uses to reach the jump host (VPN server). Must
+	// be routable FROM the host — not the backend's internal name for the jump.
+	jumpEndpoint := strings.TrimSpace(params.WGEndpoint)
+	if jumpEndpoint == "" {
+		jumpEndpoint = s.cfg.WGJumpEndpoint
+	}
+	out, err := priv(s.hostWGScript(wgIP, jumpPub, jumpEndpoint))
 	if err != nil {
 		return fail("configure_host_wireguard", orErr(err, out))
 	}
@@ -298,7 +308,7 @@ func (s *Service) validateCertLogin(ctx context.Context, sessionID uuid.UUID, wg
 // wg-quick (kernel module, with a userspace wireguard-go fallback), enables it
 // on boot, and reports the resulting interface state. The private key is
 // generated on the host and never transmitted.
-func (s *Service) hostWGScript(wgIP, jumpPub string) string {
+func (s *Service) hostWGScript(wgIP, jumpPub, jumpEndpoint string) string {
 	iface := s.cfg.WGInterface
 	return fmt.Sprintf(`set -e
 IF=%s; IP=%s; SUBNET=%s; JPUB='%s'; JEP=%s; PORT=%d
@@ -351,7 +361,7 @@ WGADDR=$(ip -br addr show $IF 2>/dev/null | awk '{print $3}')
 echo "WGSTATE=$WGSTATE"
 echo "WGADDR=$WGADDR"
 echo "HOSTPUB=$PUB"`,
-		iface, wgIP, s.cfg.WGSubnet, jumpPub, s.cfg.WGJumpEndpoint, s.cfg.WGPort)
+		iface, wgIP, s.cfg.WGSubnet, jumpPub, jumpEndpoint, s.cfg.WGPort)
 }
 
 // jumpPeerScript renders the script that adds the host as a peer on the jump host.
