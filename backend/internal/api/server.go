@@ -36,6 +36,7 @@ import (
 	"github.com/fleet-terminal/backend/internal/identity"
 	"github.com/fleet-terminal/backend/internal/jobs"
 	"github.com/fleet-terminal/backend/internal/krl"
+	"github.com/fleet-terminal/backend/internal/livesessions"
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/monitor"
 	"github.com/fleet-terminal/backend/internal/sessionsapi"
@@ -62,6 +63,7 @@ type Server struct {
 	Gateway *sshgw.Gateway
 	Hub     *ws.Hub
 	Jobs    *jobs.Registry
+	Live    *livesessions.Registry
 
 	router chi.Router
 }
@@ -84,6 +86,7 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 		Gateway: gateway,
 		Hub:     ws.NewHub(),
 		Jobs:    jobs.NewRegistry(),
+		Live:    livesessions.New(),
 	}
 
 	// On login, mint an ephemeral SSH identity bound to the session; on logout,
@@ -97,6 +100,10 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 		},
 		func(ctx context.Context, _ uuid.UUID, sessionID uuid.UUID, _ string) {
 			issuer.DestroySession(ctx, sessionID)
+			// Forcibly close any live terminal connections for this session.
+			if n := s.Live.Close(sessionID); n > 0 {
+				log.Info("closed live terminal connections", "session", sessionID, "count", n)
+			}
 		},
 	)
 	// Re-issue an ephemeral identity for a valid session if the in-RAM vault was
@@ -343,7 +350,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 		writeJSON(w, http.StatusOK, map[string]string{"pong": "ok"})
 	})
 
-	deps := &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log, Auth: s.Auth, CA: s.Issuer, Gateway: s.Gateway}
+	deps := &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log, Auth: s.Auth, CA: s.Issuer, Gateway: s.Gateway, Live: s.Live}
 	deps.DistributeKRL = s.distributeKRL
 
 	// M2 — first-run wizard + authentication.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/fleet-terminal/backend/internal/auth"
 	"github.com/fleet-terminal/backend/internal/config"
+	"github.com/fleet-terminal/backend/internal/livesessions"
 	"github.com/fleet-terminal/backend/internal/store"
 )
 
@@ -18,6 +19,7 @@ type Deps struct {
 	Cfg   *config.Config
 	Log   *slog.Logger
 	Auth  *auth.Service
+	Live  *livesessions.Registry
 
 	// SSH services are populated once the gateway/CA are constructed. Modules
 	// that need them (terminal, sftp, enrollment, monitor) read these fields.

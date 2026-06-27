@@ -223,10 +223,8 @@ func (h *handler) terminateSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
-	if err := h.d.Store.RevokeUserSessions(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not terminate sessions")
-		return
-	}
+	// Ends every session: zeroizes keys, revokes certs, AND closes live terminals.
+	h.d.Auth.DestroyUserSessions(r.Context(), id)
 	h.audit(r, "user.terminate_sessions", "user", id.String(), nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sessions_terminated"})
 }

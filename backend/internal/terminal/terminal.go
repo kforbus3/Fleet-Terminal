@@ -92,6 +92,18 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 
 // run drives a single terminal session lifecycle.
 func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal, host *models.Host) {
+	// Register the live connection up front (before the SSH dial) so it can be
+	// force-closed the instant the session is revoked — closing the WebSocket
+	// unwinds the SSH session and gateway connection via the read/write pumps.
+	// There is no race window where a revoke could miss this connection.
+	if h.d.Live != nil {
+		dereg := h.d.Live.Register(p.SessionID, func() {
+			_ = ws.WriteMessage(websocket.TextMessage, mustJSON(controlMsg{Type: "error", Data: "session terminated by administrator"}))
+			_ = ws.Close()
+		})
+		defer dereg()
+	}
+
 	// Candidate addresses the gateway dials through the jump host, in order of
 	// preference: the WireGuard overlay address first, then the management
 	// address / hostname as a fallback (useful where the overlay data plane is
