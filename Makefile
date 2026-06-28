@@ -1,7 +1,10 @@
 # Fleet Terminal — developer entrypoints.
 # Everything runs through Docker so no local Go/Postgres toolchain is required.
 
-COMPOSE        := docker compose -f deploy/compose/docker-compose.yml
+# NOTE: --env-file .env is REQUIRED. Compose otherwise loads .env from the
+# compose file's directory (deploy/compose/), not the repo root where our .env
+# lives — silently ignoring all FLEET_* settings and falling back to defaults.
+COMPOSE        := docker compose --env-file .env -f deploy/compose/docker-compose.yml
 COMPOSE_FABRIC := $(COMPOSE) -f deploy/compose/docker-compose.testfabric.yml
 COMPOSE_SINGLE := $(COMPOSE) -f deploy/compose/docker-compose.jumphost.yml
 

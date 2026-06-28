@@ -53,6 +53,11 @@ cp .env.example .env                 # local / evaluation
 cp .env.production.example .env      # production starting point
 ```
 
+Keep `.env` at the **repo root** and always use the `make` targets (or pass
+`--env-file .env` to `docker compose` yourself). Compose otherwise loads `.env`
+from the compose file's directory (`deploy/compose/`), silently ignoring your
+settings and falling back to defaults.
+
 Generate strong secrets (required in production):
 
 ```sh
@@ -150,7 +155,7 @@ default `jumphost:22`.
 Run only the app stack and point it at a jump host you operate elsewhere:
 
 ```sh
-make up-app      # or: docker compose -f deploy/compose/docker-compose.yml up -d
+make up-app      # or: docker compose --env-file .env -f deploy/compose/docker-compose.yml up -d
 ```
 
 Set `FLEET_JUMP_HOST` / `FLEET_JUMP_USER` to your jump host, ensure it trusts the

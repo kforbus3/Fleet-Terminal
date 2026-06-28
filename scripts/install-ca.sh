@@ -7,7 +7,7 @@
 # after `make up`, then enroll hosts from the UI.
 set -euo pipefail
 
-COMPOSE=(docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.testfabric.yml)
+COMPOSE=(docker compose --env-file .env -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.testfabric.yml)
 NODES=(jumphost host-ubuntu host-rocky)
 
 echo "Reading active user CA from the database…"
