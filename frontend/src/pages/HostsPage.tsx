@@ -27,7 +27,7 @@ import {
 } from "../api/hosts";
 import { listGroups, listUsers } from "../api/admin";
 import {
-  listScanProfiles, listHostScans, startScan, scanReportUrl, type HostScan,
+  listScanProfiles, listHostScans, startScan, prepareScan, scanReportUrl, type HostScan,
 } from "../api/scans";
 import { useAuthStore } from "../store/auth";
 import {
@@ -460,8 +460,9 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
     queryKey: ["scan-profiles", hostId],
     queryFn: () => listScanProfiles(hostId),
     enabled: Boolean(host),
-    staleTime: 60_000,
     retry: false,
+    // Poll while the scanner is installing so profiles appear when it's ready.
+    refetchInterval: (q) => ((q.state.data as { installing?: boolean } | undefined)?.installing ? 6000 : false),
   });
 
   const { data: scans = [] } = useQuery({
@@ -472,6 +473,17 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
       const list = q.state.data as HostScan[] | undefined;
       return list?.some((s) => s.status === "pending" || s.status === "running") ? 4000 : false;
     },
+  });
+
+  // A completed scan also installs the scanner, so refresh the profile list then.
+  const completedCount = scans.filter((s) => s.status === "completed").length;
+  useEffect(() => {
+    if (completedCount > 0) void qc.invalidateQueries({ queryKey: ["scan-profiles", hostId] });
+  }, [completedCount, hostId, qc]);
+
+  const prepareMut = useMutation({
+    mutationFn: () => prepareScan(hostId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-profiles", hostId] }),
   });
 
   const runMut = useMutation({
@@ -492,11 +504,7 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
             <TextField
               select size="small" label="Profile" value={profile}
               onChange={(e) => setProfile(e.target.value)} sx={{ flexGrow: 1 }}
-              helperText={
-                profLoading ? "Loading profiles from host…"
-                  : prof && !prof.installed ? "Scanner not installed yet — it'll be set up on the first scan (default profile)."
-                  : undefined
-              }
+              helperText={profLoading ? "Loading profiles from host…" : prof ? `${prof.profiles.length} profiles available` : undefined}
             >
               <MenuItem value="">Standard (default)</MenuItem>
               {prof?.profiles.map((p) => (
@@ -507,6 +515,25 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
               {runMut.isPending ? "Starting…" : "Run scan"}
             </Button>
           </Stack>
+
+          {/* Profiles only populate once the scanner is installed on the host. */}
+          {prof && !prof.installed && (
+            prof.installing || prepareMut.isPending ? (
+              <Alert severity="info" icon={<CircularProgress size={18} />} sx={{ mb: 2 }}>
+                Installing OpenSCAP on the host… the profile list will populate when it's ready
+                (the first install can take a few minutes). You can also just run the default profile now.
+              </Alert>
+            ) : (
+              <Alert severity="info" sx={{ mb: 2 }} action={
+                <Button color="inherit" size="small" disabled={prepareMut.isPending} onClick={() => prepareMut.mutate()}>
+                  Install scanner
+                </Button>
+              }>
+                OpenSCAP isn't installed on this host yet, so only the default profile is available.
+                Install it to choose a specific profile (CIS, STIG, …), or just run the default.
+              </Alert>
+            )
+          )}
           {runMut.isError && <Alert severity="error" sx={{ mb: 2 }}>Could not start the scan.</Alert>}
 
           <Typography variant="overline" color="text.secondary">History</Typography>

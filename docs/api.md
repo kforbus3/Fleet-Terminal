@@ -316,12 +316,15 @@ An approval mints a `temporary_permissions` grant that expires automatically.
 
 ## Security scans (OpenSCAP)
 
-All require `Host.Scan` (the report route authenticates via a `token` query param
-so it can be embedded/downloaded by the browser).
+All require `Host.Scan` **and** access to the target host (group / direct /
+temporary grant; super admins bypass) — the same gate as terminals/SFTP. The
+report route authenticates via a `token` query param so it can be
+embedded/downloaded by the browser.
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/v1/hosts/{id}/scan/profiles` | Discover SCAP profiles available on the host (no install) |
+| GET | `/api/v1/hosts/{id}/scan/profiles` | Discover profiles (no install); `{ installed, installing, datastream, profiles }` |
+| POST | `/api/v1/hosts/{id}/scan/prepare` | Install the scanner + content in the background so profiles populate |
 | POST | `/api/v1/hosts/{id}/scan` | Start a scan; body `{ "profile": "<id>" }` (empty = standard) |
 | GET | `/api/v1/hosts/{id}/scans` | List recent scans for the host |
 | GET | `/api/v1/scans/{id}` | One scan's status + summary (poll while running) |

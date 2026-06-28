@@ -97,7 +97,7 @@ and operational recommendations.
 - **Host access** is a separate gate from the RBAC permission: even with
   `Host.Connect`, a user must reach the host via a **shared group**, a **direct
   user→host grant** (`host_users`), or an active **temporary grant** — super
-  admins bypass. Enforced on every terminal and SFTP connection
+  admins bypass. Enforced on every terminal, SFTP, and **OpenSCAP scan**
   (`UserCanAccessHost`). Users have no host access by default.
 - **Root vs. login-only on the host** is gated by `Host.Sudo`. Each enrolled host
   has two shared accounts: a privileged one (`fleet`, NOPASSWD sudo) and a

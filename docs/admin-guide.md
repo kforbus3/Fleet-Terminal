@@ -81,6 +81,11 @@ RBAC is backend-authoritative. The following roles are seeded:
 The full permission catalog is in [database.md](./database.md#permissions). You
 can create custom roles and assign any subset of permissions.
 
+> `Host.Connect`, `Host.Scan`, and `File.Transfer` are **also** gated by host
+> access — the permission lets a user *attempt* the action, but they still need a
+> group / direct / temporary grant to the specific host (super admins bypass). So
+> granting `Host.Scan` to Auditors only lets them scan hosts they can reach.
+
 ### Root vs. login-only access (`Host.Sudo`)
 
 Enrolled hosts have **two shared login accounts**, and a connecting user lands in

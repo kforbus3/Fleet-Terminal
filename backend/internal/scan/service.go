@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,10 @@ type Service struct {
 	log    *slog.Logger
 	gw     *sshgw.Gateway
 	issuer *identity.Issuer
+
+	// installing tracks hosts with an in-flight background scanner install, so
+	// repeated "prepare" requests don't kick off duplicate installs.
+	installing sync.Map // hostID -> struct{}
 }
 
 func New(st *store.Store, cfg *config.Config, log *slog.Logger, gw *sshgw.Gateway, issuer *identity.Issuer) *Service {
@@ -96,6 +101,38 @@ func (s *Service) DiscoverProfiles(ctx context.Context, h *models.Host) (install
 		}
 	}
 	return installed, datastream, profiles, nil
+}
+
+// IsInstalling reports whether a background scanner install is in flight for the host.
+func (s *Service) IsInstalling(hostID uuid.UUID) bool {
+	_, ok := s.installing.Load(hostID)
+	return ok
+}
+
+// EnsureInstalled installs the scanner + SCAP content on the host in the
+// background if not already running, so the profile picker can populate before
+// the first scan (a sync request can't wait out a multi-minute package install).
+// Idempotent: the install script is a no-op when oscap + content are present.
+func (s *Service) EnsureInstalled(h *models.Host) {
+	if _, loaded := s.installing.LoadOrStore(h.ID, struct{}{}); loaded {
+		return // already installing
+	}
+	go func() {
+		defer s.installing.Delete(h.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		conn, err := s.dial(ctx, h)
+		if err != nil {
+			s.log.Warn("scan prepare: dial", "host", h.Hostname, "err", err)
+			return
+		}
+		defer conn.Close()
+		if _, err := runScript(ctx, conn, installScript); err != nil {
+			s.log.Warn("scan prepare: install", "host", h.Hostname, "err", err)
+			return
+		}
+		s.log.Info("scan prepare: scanner ready", "host", h.Hostname)
+	}()
 }
 
 // Run executes a scan in the background and records its outcome. It is launched
@@ -179,11 +216,29 @@ command -v oscap >/dev/null 2>&1 || { echo "STATUS=missing"; exit 0; }
 ID=$(. /etc/os-release 2>/dev/null; echo "$ID"); VER=$(. /etc/os-release 2>/dev/null; echo "$VERSION_ID" | tr -d .)
 DS=""
 for c in "$C/ssg-${ID}${VER}-ds.xml" "$C/ssg-${ID}-ds.xml"; do [ -f "$c" ] && DS="$c" && break; done
+[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | grep -i "$ID" | head -1)
 [ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | head -1)
 [ -z "$DS" ] && { echo "STATUS=nocontent"; exit 0; }
 echo "STATUS=ok"
 echo "DATASTREAM=$DS"
 oscap info --profiles "$DS" 2>/dev/null`
+
+// installScript installs the scanner + SCAP content if missing (the install
+// portion of scanScript, run standalone by EnsureInstalled). No-op when present.
+const installScript = `C=/usr/share/xml/scap/ssg/content
+if ! command -v oscap >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openscap-scanner >/dev/null 2>&1;
+  elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y openscap-scanner >/dev/null 2>&1;
+  elif command -v yum >/dev/null 2>&1; then sudo yum install -y openscap-scanner >/dev/null 2>&1;
+  elif command -v zypper >/dev/null 2>&1; then sudo zypper --non-interactive install openscap-utils >/dev/null 2>&1; fi
+fi
+if ! ls "$C"/ssg-*-ds.xml >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ssg-base ssg-debian ssg-debderived ssg-nondebian ssg-applications >/dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scap-security-guide >/dev/null 2>&1;
+  elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y scap-security-guide >/dev/null 2>&1;
+  elif command -v yum >/dev/null 2>&1; then sudo yum install -y scap-security-guide >/dev/null 2>&1;
+  elif command -v zypper >/dev/null 2>&1; then sudo zypper --non-interactive install scap-security-guide >/dev/null 2>&1; fi
+fi
+echo done`
 
 // scanScript installs oscap + SCAP content if missing, resolves the host's
 // datastream, evaluates the given profile (empty -> the standard profile), and

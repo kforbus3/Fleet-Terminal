@@ -22,6 +22,7 @@ func Mount(r chi.Router, d *app.Deps, svc *Service) {
 	r.Group(func(pr chi.Router) {
 		pr.Use(d.Auth.RequireAuth)
 		pr.With(d.Auth.RequirePermission("Host.Scan")).Get("/hosts/{id}/scan/profiles", h.profiles)
+		pr.With(d.Auth.RequirePermission("Host.Scan")).Post("/hosts/{id}/scan/prepare", h.prepare)
 		pr.With(d.Auth.RequirePermission("Host.Scan")).Post("/hosts/{id}/scan", h.start)
 		pr.With(d.Auth.RequirePermission("Host.Scan")).Get("/hosts/{id}/scans", h.list)
 		pr.With(d.Auth.RequirePermission("Host.Scan")).Get("/scans/{id}", h.get)
@@ -34,6 +35,19 @@ type handler struct {
 	svc *Service
 }
 
+// canAccess enforces host-level authorization (super admins bypass): the same
+// gate as terminals/SFTP, so scanning is limited to hosts the user can reach.
+func (h *handler) canAccess(r *http.Request, p *auth.Principal, hostID uuid.UUID) bool {
+	if p == nil {
+		return false
+	}
+	if p.IsSuperAdmin {
+		return true
+	}
+	ok, err := h.d.Store.UserCanAccessHost(r.Context(), p.UserID, hostID)
+	return err == nil && ok
+}
+
 func (h *handler) hostFromURL(w http.ResponseWriter, r *http.Request) (*models.Host, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -43,6 +57,10 @@ func (h *handler) hostFromURL(w http.ResponseWriter, r *http.Request) (*models.H
 	host, err := h.d.Store.GetHost(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "host not found")
+		return nil, false
+	}
+	if !h.canAccess(r, auth.MustPrincipal(r), host.ID) {
+		writeError(w, http.StatusForbidden, "not authorized for host")
 		return nil, false
 	}
 	return host, true
@@ -63,8 +81,20 @@ func (h *handler) profiles(w http.ResponseWriter, r *http.Request) {
 		profiles = []models.ScanProfile{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"installed": installed, "datastream": datastream, "profiles": profiles,
+		"installed": installed, "installing": h.svc.IsInstalling(host.ID),
+		"datastream": datastream, "profiles": profiles,
 	})
+}
+
+// prepare installs the scanner + SCAP content on the host in the background so
+// the profile picker can populate before the first scan.
+func (h *handler) prepare(w http.ResponseWriter, r *http.Request) {
+	host, ok := h.hostFromURL(w, r)
+	if !ok {
+		return
+	}
+	h.svc.EnsureInstalled(host)
+	writeJSON(w, http.StatusAccepted, map[string]any{"installing": h.svc.IsInstalling(host.ID)})
 }
 
 type startReq struct {
@@ -120,6 +150,10 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "scan not found")
 		return
 	}
+	if !h.canAccess(r, auth.MustPrincipal(r), rec.HostID) {
+		writeError(w, http.StatusForbidden, "not authorized for host")
+		return
+	}
 	writeJSON(w, http.StatusOK, rec)
 }
 
@@ -139,6 +173,15 @@ func (h *handler) report(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "bad scan id", http.StatusBadRequest)
+		return
+	}
+	rec, err := h.d.Store.GetHostScan(r.Context(), id)
+	if err != nil {
+		http.Error(w, "report not found", http.StatusNotFound)
+		return
+	}
+	if !h.canAccess(r, principal, rec.HostID) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	path, err := h.d.Store.HostScanReportPath(r.Context(), id)

@@ -28,6 +28,7 @@ export interface ScanProfile {
 
 export interface ScanProfilesResponse {
   installed: boolean;
+  installing: boolean;
   datastream: string;
   profiles: ScanProfile[];
 }
@@ -36,7 +37,16 @@ export interface ScanProfilesResponse {
 // reaches the host over SSH).
 export async function listScanProfiles(hostId: string): Promise<ScanProfilesResponse> {
   const { data } = await api.get<ScanProfilesResponse>(`/api/v1/hosts/${hostId}/scan/profiles`);
-  return { installed: data.installed, datastream: data.datastream, profiles: data.profiles ?? [] };
+  return {
+    installed: data.installed, installing: data.installing,
+    datastream: data.datastream, profiles: data.profiles ?? [],
+  };
+}
+
+// Install the scanner + SCAP content on a host in the background so the profile
+// picker can populate before the first scan.
+export async function prepareScan(hostId: string): Promise<void> {
+  await api.post(`/api/v1/hosts/${hostId}/scan/prepare`, {});
 }
 
 // Start a scan. Empty profile -> the host's standard/baseline profile.

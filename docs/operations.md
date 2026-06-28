@@ -113,10 +113,14 @@ issued — no separate setup step needed.
 
 ## Security scans (OpenSCAP)
 
-Click the **shield** (ⓗ) icon on a host row (needs `Host.Scan`) to run an OpenSCAP
-compliance scan. Pick a **profile** — the dialog discovers the profiles available on the
+Click the **shield** (ⓗ) icon on a host row to run an OpenSCAP compliance scan. It needs
+`Host.Scan` **and** access to that host (the same group/direct/temporary gate as terminals;
+super admins bypass). Pick a **profile** — the dialog discovers the profiles available on the
 host (CIS, STIG, PCI-DSS, …) and defaults to the standard baseline — then **Run scan**.
 
+- The profile list only populates once the scanner is installed on the host. On a host that's
+  never been scanned, click **Install scanner** (or just run the default profile, which installs
+  it) — the list fills in once it's ready.
 - The backend runs `oscap` over the gateway as the privileged host account, **auto-installing
   the scanner + SCAP content** if missing (so the first scan on a host can take a few minutes).
 - Scans run in the background; the history list updates as they finish, showing the **score**
