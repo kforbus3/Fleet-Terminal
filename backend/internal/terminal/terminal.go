@@ -187,6 +187,14 @@ func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal
 		TargetKind: "host", TargetID: host.ID.String(),
 		Detail: map[string]any{"hostname": host.Hostname, "sshSessionId": sshSessionID},
 	})
+	// Push a live event so dashboards show who is connected to which host in
+	// real time (matched by session.end below).
+	if h.d.Events != nil {
+		h.d.Events.Broadcast("session.start", map[string]any{
+			"sshSessionId": sshSessionID, "username": p.Username,
+			"hostId": host.ID, "hostname": host.Hostname, "startedAt": startUnix,
+		})
+	}
 
 	var bytesIn, bytesOut int64
 	done := make(chan struct{})
@@ -285,6 +293,12 @@ func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal
 		TargetKind: "host", TargetID: host.ID.String(),
 		Detail: map[string]any{"bytesIn": bytesIn, "bytesOut": bytesOut, "sshSessionId": sshSessionID},
 	})
+	if h.d.Events != nil {
+		h.d.Events.Broadcast("session.end", map[string]any{
+			"sshSessionId": sshSessionID, "username": p.Username,
+			"hostId": host.ID, "hostname": host.Hostname,
+		})
+	}
 }
 
 func recordingInput(sshSessionID uuid.UUID, res recorder.Result) store.RecordingInput {

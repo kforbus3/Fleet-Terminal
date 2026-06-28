@@ -26,9 +26,19 @@ type Deps struct {
 	CA      CAIssuer
 	Gateway Dialer
 
+	// Events fans out real-time updates (host status, session start/end) to
+	// connected dashboards over the WebSocket hub.
+	Events Broadcaster
+
 	// DistributeKRL pushes the current certificate revocation list to all enrolled
 	// hosts immediately (set by the server). Returns the number of hosts updated.
 	DistributeKRL func(ctx context.Context) (int, error)
+}
+
+// Broadcaster pushes a typed real-time event to all connected clients. The
+// concrete implementation is internal/ws.Hub.
+type Broadcaster interface {
+	Broadcast(eventType string, data any)
 }
 
 // CAIssuer issues and manages ephemeral SSH user certificates. The concrete

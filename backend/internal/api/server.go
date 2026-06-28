@@ -378,7 +378,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 		writeJSON(w, http.StatusOK, map[string]string{"pong": "ok"})
 	})
 
-	deps := &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log, Auth: s.Auth, CA: s.Issuer, Gateway: s.Gateway, Live: s.Live}
+	deps := &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log, Auth: s.Auth, CA: s.Issuer, Gateway: s.Gateway, Live: s.Live, Events: s.Hub}
 	deps.DistributeKRL = s.distributeKRL
 
 	// M2 — first-run wizard + authentication.
