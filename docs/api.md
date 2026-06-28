@@ -287,12 +287,13 @@ Read-only access to recorded SSH sessions and their `asciicast-v2` recordings.
 | GET | `/api/v1/approvals/grants/mine` | `Approval.Request` |
 | POST | `/api/v1/approvals/{id}/decide` | `Approval.Decide` |
 
-**`GET /approvals/targets`** → the hosts and groups a requester can pick (by
-name) when filing a request, so the form offers a searchable picker instead of a
-raw UUID. `hasAccess` flags targets the requester can already reach.
+**`GET /approvals/targets?kind=host|group&q=<text>`** → server-side search for
+the access-request picker. Matches hosts (or groups) by name, case-insensitive
+substring, capped at 50 results so it scales to large fleets. Targets the
+requester can already reach are excluded. `kind` defaults to `host`; `q` empty
+returns the first matches.
 ```json
-{ "hosts":  [ { "id": "…", "name": "web-01", "environment": "prod", "hasAccess": false } ],
-  "groups": [ { "id": "…", "name": "dba", "hasAccess": true } ] }
+{ "targets": [ { "id": "…", "name": "web-01", "environment": "prod" } ] }
 ```
 
 **`POST /approvals`**

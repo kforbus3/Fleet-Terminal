@@ -41,12 +41,18 @@ export interface RequestTarget {
   id: string;
   name: string;
   environment?: string;
-  hasAccess: boolean;
 }
 
-export async function listRequestTargets(): Promise<{ hosts: RequestTarget[]; groups: RequestTarget[] }> {
-  const { data } = await api.get<{ hosts: RequestTarget[]; groups: RequestTarget[] }>("/api/v1/approvals/targets");
-  return { hosts: data.hosts ?? [], groups: data.groups ?? [] };
+// Server-side search for the access-request picker. Returns up to ~50 matching
+// hosts or groups (by name), already excluding ones the requester can reach.
+export async function searchRequestTargets(
+  kind: "host" | "group",
+  q: string,
+): Promise<RequestTarget[]> {
+  const { data } = await api.get<{ targets: RequestTarget[] }>("/api/v1/approvals/targets", {
+    params: { kind, q: q || undefined },
+  });
+  return data.targets ?? [];
 }
 
 export async function listApprovals(status?: string): Promise<ApprovalRequest[]> {

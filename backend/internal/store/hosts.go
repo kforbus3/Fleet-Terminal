@@ -133,6 +133,33 @@ func (s *Store) ListHosts(ctx context.Context, limit, offset int) ([]models.Host
 	return hosts, nil
 }
 
+// SearchHosts returns hosts whose hostname matches q (case-insensitive
+// substring), ordered by hostname and capped at limit. Only identity fields
+// (id, hostname, environment) are populated — enough for name pickers — so it
+// skips the per-host detail/status fan-out that ListHosts does.
+func (s *Store) SearchHosts(ctx context.Context, q string, limit int) ([]models.Host, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, hostname, environment FROM hosts
+		 WHERE hostname ILIKE '%' || $1 || '%' ESCAPE '\'
+		 ORDER BY hostname LIMIT $2`, likeEscape(q), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Host
+	for rows.Next() {
+		var h models.Host
+		if err := rows.Scan(&h.ID, &h.Hostname, &h.Environment); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // ListAccessibleHosts returns hosts a user may access (group or temp grant), or
 // all hosts for super admins.
 func (s *Store) ListAccessibleHosts(ctx context.Context, userID uuid.UUID, isSuperAdmin bool) ([]models.Host, error) {

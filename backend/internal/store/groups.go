@@ -2,11 +2,44 @@ package store
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/fleet-terminal/backend/internal/models"
 )
+
+// likeEscape escapes LIKE/ILIKE wildcards so user input is matched literally
+// (paired with `ESCAPE '\'` in the query). Without it, a typed `%` or `_` would
+// act as a wildcard.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// SearchGroups returns groups whose name matches q (case-insensitive substring),
+// ordered by name and capped at limit.
+func (s *Store) SearchGroups(ctx context.Context, q string, limit int) ([]models.Group, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, description, created_at FROM groups
+		 WHERE name ILIKE '%' || $1 || '%' ESCAPE '\'
+		 ORDER BY name LIMIT $2`, likeEscape(q), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Group
+	for rows.Next() {
+		var g models.Group
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
 
 // ListGroups returns all groups.
 func (s *Store) ListGroups(ctx context.Context) ([]models.Group, error) {

@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Autocomplete, Box, Button, Chip, MenuItem, Paper, Stack, Tab, Table, TableBody,
-  TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Typography,
+  Autocomplete, Box, Button, Chip, CircularProgress, MenuItem, Paper, Stack, Tab,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField,
+  Typography,
 } from "@mui/material";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createApproval, decideApproval, listApprovals, listMyApprovals, listRequestTargets,
+  createApproval, decideApproval, listApprovals, listMyApprovals, searchRequestTargets,
   type ApprovalRequest, type RequestTarget,
 } from "../api/approvals";
 
@@ -119,9 +120,20 @@ export function ApprovalsPage() {
   const [reqDuration, setReqDuration] = useState("1h");
   const [reqCustom, setReqCustom] = useState("60");
 
-  // Targets to pick from, by name. Drop targets the requester can already reach.
-  const { data: targets } = useQuery({ queryKey: ["approval-targets"], queryFn: listRequestTargets });
-  const options = ((targetKind === "host" ? targets?.hosts : targets?.groups) ?? []).filter((t) => !t.hasAccess);
+  // Targets are searched server-side as the user types (debounced), so this
+  // scales to large fleets. Already-reachable targets are excluded by the API.
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  const { data: options = [], isFetching: targetsLoading } = useQuery({
+    queryKey: ["approval-targets", targetKind, debounced],
+    queryFn: () => searchRequestTargets(targetKind, debounced),
+    enabled: tab === 0,
+    placeholderData: keepPreviousData,
+  });
 
   // Per-row decision duration in the queue.
   const [decideDuration, setDecideDuration] = useState<Record<string, string>>({});
@@ -174,6 +186,10 @@ export function ApprovalsPage() {
                   multiple size="small" sx={{ flexGrow: 1, minWidth: 320 }}
                   options={options} value={selected}
                   onChange={(_, v) => setSelected(v)}
+                  inputValue={search}
+                  onInputChange={(_, v) => setSearch(v)}
+                  filterOptions={(x) => x}
+                  loading={targetsLoading}
                   getOptionLabel={(o) => o.name}
                   isOptionEqualToValue={(a, b) => a.id === b.id}
                   renderOption={(props, o) => (
@@ -183,9 +199,20 @@ export function ApprovalsPage() {
                   )}
                   renderInput={(params) => (
                     <TextField {...params} label={targetKind === "host" ? "Hosts" : "Groups"}
-                      placeholder={selected.length ? "" : "Search by name…"} />
+                      placeholder={selected.length ? "" : "Search by name…"}
+                      InputProps={{
+                        ...params.InputProps,
+                        endAdornment: (
+                          <>
+                            {targetsLoading ? <CircularProgress size={16} /> : null}
+                            {params.InputProps.endAdornment}
+                          </>
+                        ),
+                      }} />
                   )}
-                  noOptionsText={`No ${targetKind === "host" ? "hosts" : "groups"} available to request`}
+                  noOptionsText={debounced
+                    ? `No ${targetKind === "host" ? "hosts" : "groups"} match "${debounced}"`
+                    : "Type to search"}
                 />
               </Stack>
               <TextField size="small" label="Reason" value={reason}

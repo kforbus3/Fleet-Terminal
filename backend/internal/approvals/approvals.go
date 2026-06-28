@@ -92,56 +92,65 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 // requestTarget is a host or group a requester can pick when filing an access
-// request, by name rather than raw UUID. hasAccess flags targets the requester
-// can already reach so the UI can hide or de-emphasize them.
+// request, by name rather than raw UUID.
 type requestTarget struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Environment string `json:"environment,omitempty"`
-	HasAccess   bool   `json:"hasAccess"`
 }
 
-// targets lists the hosts and groups a requester can request access to, so the
-// access-request form offers a searchable name picker instead of a raw ID field.
+// targets serves the access-request name picker: a server-side search over hosts
+// or groups (?kind=host|group&q=...), capped server-side so it scales to large
+// fleets. Targets the requester can already reach are excluded — there is
+// nothing to request for those.
 func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
 	p := auth.MustPrincipal(r)
 	ctx := r.Context()
+	q := r.URL.Query().Get("q")
+	const limit = 50
 
-	hosts, err := h.d.Store.ListHosts(ctx, 1000, 0)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not list hosts")
+	out := make([]requestTarget, 0, limit)
+	switch r.URL.Query().Get("kind") {
+	case "", "host":
+		hosts, err := h.d.Store.SearchHosts(ctx, q, limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not search hosts")
+			return
+		}
+		accessible, _ := h.d.Store.ListAccessibleHosts(ctx, p.UserID, p.IsSuperAdmin)
+		have := make(map[uuid.UUID]bool, len(accessible))
+		for _, a := range accessible {
+			have[a.ID] = true
+		}
+		for _, hh := range hosts {
+			if have[hh.ID] {
+				continue
+			}
+			out = append(out, requestTarget{ID: hh.ID.String(), Name: hh.Hostname, Environment: hh.Environment})
+		}
+	case "group":
+		groups, err := h.d.Store.SearchGroups(ctx, q, limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not search groups")
+			return
+		}
+		memberNames, _ := h.d.Store.UserGroupNames(ctx, p.UserID)
+		member := make(map[string]bool, len(memberNames))
+		for _, n := range memberNames {
+			member[n] = true
+		}
+		for _, g := range groups {
+			if member[g.Name] {
+				continue
+			}
+			out = append(out, requestTarget{ID: g.ID.String(), Name: g.Name})
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "kind must be host or group")
 		return
 	}
-	accessible, _ := h.d.Store.ListAccessibleHosts(ctx, p.UserID, p.IsSuperAdmin)
-	haveHost := make(map[uuid.UUID]bool, len(accessible))
-	for _, a := range accessible {
-		haveHost[a.ID] = true
-	}
-	hostTargets := make([]requestTarget, 0, len(hosts))
-	for _, hh := range hosts {
-		hostTargets = append(hostTargets, requestTarget{
-			ID: hh.ID.String(), Name: hh.Hostname, Environment: hh.Environment, HasAccess: haveHost[hh.ID],
-		})
-	}
 
-	groups, err := h.d.Store.ListGroups(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not list groups")
-		return
-	}
-	memberNames, _ := h.d.Store.UserGroupNames(ctx, p.UserID)
-	member := make(map[string]bool, len(memberNames))
-	for _, n := range memberNames {
-		member[n] = true
-	}
-	groupTargets := make([]requestTarget, 0, len(groups))
-	for _, g := range groups {
-		groupTargets = append(groupTargets, requestTarget{
-			ID: g.ID.String(), Name: g.Name, HasAccess: member[g.Name],
-		})
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"hosts": hostTargets, "groups": groupTargets})
+	writeJSON(w, http.StatusOK, map[string]any{"targets": out})
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
