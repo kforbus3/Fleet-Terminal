@@ -92,8 +92,15 @@ export function DashboardPage() {
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" sx={{ mb: 2 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Typography variant="h5" sx={{ flexGrow: 1 }}>Fleet Overview</Typography>
+        {version?.environment && (
+          <Chip
+            size="small" variant="outlined"
+            label={version.environment}
+            color={version.environment === "production" ? "success" : "warning"}
+          />
+        )}
         <Chip
           size="small"
           label={backendDown ? "backend unreachable" : version ? `connected · ${version.version}` : "connecting…"}

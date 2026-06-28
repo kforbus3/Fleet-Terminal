@@ -426,7 +426,10 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": s.Version})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"version":     s.Version,         // build label (FLEET_VERSION; "dev" if unset)
+		"environment": s.Cfg.Environment, // runtime mode (FLEET_ENV: production|development)
+	})
 }
 
 // recoverer converts panics into 500s and logs them.
