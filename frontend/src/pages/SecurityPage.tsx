@@ -4,6 +4,7 @@ import {
   ListItem, ListItemText, Stack, TextField, Typography,
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
+import { QRCodeSVG } from "qrcode.react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { mfaConfirm, mfaDelete, mfaEnroll, mfaList } from "../api/auth";
 import { registerPasskey, webauthnSupported } from "../api/webauthn";
@@ -86,17 +87,22 @@ export function SecurityPage() {
             <>
               <Divider sx={{ my: 2 }} />
               <Alert severity="info" sx={{ mb: 2 }}>
-                Add this account to your authenticator app, then enter the current code to confirm.
-                The secret is shown only once.
+                Scan the QR code with your authenticator app (or enter the secret key
+                manually), then enter the current 6-digit code to confirm. The secret
+                is shown only once.
               </Alert>
+              {otpauth && (
+                <Box sx={{ display: "flex", justifyContent: "center", mb: 2 }}>
+                  {/* Rendered locally — the secret never leaves the browser. */}
+                  <Box sx={{ p: 1.5, bgcolor: "#fff", borderRadius: 1, display: "inline-flex" }}>
+                    <QRCodeSVG value={otpauth} size={184} />
+                  </Box>
+                </Box>
+              )}
               <TextField
-                label="Secret key" value={secret} fullWidth size="small"
-                InputProps={{ readOnly: true }} sx={{ mb: 1 }}
-              />
-              <TextField
-                label="otpauth URL" value={otpauth ?? ""} fullWidth size="small"
+                label="Secret key (manual entry)" value={secret} fullWidth size="small"
                 InputProps={{ readOnly: true }} sx={{ mb: 2 }}
-                helperText="Paste into your authenticator, or generate a QR from this URL"
+                helperText="Use this if you can't scan the QR code"
               />
               {confirmError && <Alert severity="error" sx={{ mb: 1 }}>{confirmError}</Alert>}
               <Stack direction="row" spacing={2}>

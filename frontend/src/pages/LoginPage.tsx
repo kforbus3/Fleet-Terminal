@@ -3,6 +3,7 @@ import {
   Alert, Box, Button, Card, CardContent, Stack, TextField, Typography,
 } from "@mui/material";
 import TerminalIcon from "@mui/icons-material/Terminal";
+import { QRCodeSVG } from "qrcode.react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { bootstrapStatus, mfaSetupBegin } from "../api/auth";
@@ -102,10 +103,15 @@ export function LoginPage() {
               {error && <Alert severity="error">{error}</Alert>}
               {enrolling && enroll && (
                 <Alert severity="info" sx={{ wordBreak: "break-all" }}>
-                  Two-factor authentication is required for your account. In your
-                  authenticator app, add an account using this secret key, then
-                  enter the 6-digit code below.
-                  <Box sx={{ mt: 1, fontFamily: "monospace", fontSize: 16, letterSpacing: 1 }}>
+                  Two-factor authentication is required for your account. Scan this
+                  QR code with your authenticator app (or enter the secret key
+                  manually), then enter the 6-digit code below.
+                  <Box sx={{ display: "flex", justifyContent: "center", my: 1.5 }}>
+                    <Box sx={{ p: 1.5, bgcolor: "#fff", borderRadius: 1, display: "inline-flex" }}>
+                      <QRCodeSVG value={enroll.otpauthUrl} size={172} />
+                    </Box>
+                  </Box>
+                  <Box sx={{ fontFamily: "monospace", fontSize: 14, letterSpacing: 1 }}>
                     {enroll.secret}
                   </Box>
                 </Alert>
