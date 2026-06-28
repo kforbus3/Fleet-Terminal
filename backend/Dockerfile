@@ -20,11 +20,14 @@ RUN CGO_ENABLED=0 go build -trimpath \
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/fleetctl ./cmd/fleetctl
 
 FROM alpine:3.20 AS runtime
-RUN apk add --no-cache ca-certificates openssh-client tzdata postgresql16-client && \
+RUN apk add --no-cache ca-certificates openssh-client tzdata postgresql16-client su-exec && \
     addgroup -S fleet && adduser -S -G fleet fleet && \
-    mkdir -p /var/lib/fleet/recordings && chown -R fleet:fleet /var/lib/fleet
+    mkdir -p /var/lib/fleet/recordings /var/lib/fleet/scans && chown -R fleet:fleet /var/lib/fleet
 COPY --from=build /out/fleetd /usr/local/bin/fleetd
 COPY --from=build /out/fleetctl /usr/local/bin/fleetctl
-USER fleet
+# Entrypoint runs as root only to make the data dirs writable (named volumes can
+# mount root-owned), then drops to the unprivileged fleet user.
+RUN printf '#!/bin/sh\nmkdir -p /var/lib/fleet/recordings /var/lib/fleet/scans\nchown fleet:fleet /var/lib/fleet/recordings /var/lib/fleet/scans 2>/dev/null || true\nexec su-exec fleet:fleet /usr/local/bin/fleetd "$@"\n' > /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/fleetd"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
