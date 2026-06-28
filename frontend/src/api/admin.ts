@@ -182,6 +182,14 @@ export async function deleteGroup(id: string): Promise<void> {
   await api.delete(`/api/v1/groups/${id}`);
 }
 
+export async function addUserToGroup(userId: string, groupId: string): Promise<void> {
+  await api.post(`/api/v1/users/${userId}/groups/${groupId}`);
+}
+
+export async function removeUserFromGroup(userId: string, groupId: string): Promise<void> {
+  await api.delete(`/api/v1/users/${userId}/groups/${groupId}`);
+}
+
 export type Settings = Record<string, unknown>;
 
 export async function listSettings(): Promise<Settings> {
