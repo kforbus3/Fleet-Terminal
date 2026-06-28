@@ -127,6 +127,12 @@ host (CIS, STIG, PCI-DSS, …) and defaults to the standard baseline — then **
   and pass/fail counts.
 - **View** opens the full HTML report in a sandboxed in-app viewer; **Download** saves it for
   offline viewing. Reports are stored under `FLEET_SCAN_DIR` (`/var/lib/fleet/scans`).
+- The scan needs SCAP content matching the host's **OS version** (e.g. `ssg-debian13-ds.xml`
+  for Debian 13). If the host's distro is newer than its packaged `scap-security-guide`, results
+  come back mostly **notapplicable** — the scan row shows which `ssg-*-ds.xml` was used. Install
+  newer content (distro backports, or a ComplianceAsCode release) on the host to fix it.
+- Debian/Ubuntu have **no DISA STIG** profile; the closest hardening baseline is
+  **ANSSI-BP-028 (High / Enforced)**.
 
 ## Just-in-time access
 
