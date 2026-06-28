@@ -169,6 +169,10 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 		if status == "" {
 			status = "scan produced no result"
 		}
+		// Surface oscap's own output (captured on failure) so the cause is visible.
+		if detail := extractBlock(head, "DETAIL_BEGIN", "DETAIL_END"); detail != "" {
+			status += " — " + strings.ReplaceAll(detail, "\n", " | ")
+		}
 		fail("oscap: " + status)
 		return
 	}
@@ -261,6 +265,7 @@ command -v oscap >/dev/null 2>&1 || { echo "STATUS=scanner_unavailable"; exit 0;
 ID=$(. /etc/os-release 2>/dev/null; echo "$ID"); VER=$(. /etc/os-release 2>/dev/null; echo "$VERSION_ID" | tr -d .)
 DS=""
 for c in "$C/ssg-${ID}${VER}-ds.xml" "$C/ssg-${ID}-ds.xml"; do [ -f "$c" ] && DS="$c" && break; done
+[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | grep -i "$ID" | head -1)
 [ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | head -1)
 [ -z "$DS" ] && { echo "STATUS=no_content"; exit 0; }
 PROFILE='%s'
@@ -271,9 +276,20 @@ fi
 [ -z "$PROFILE" ] && { echo "STATUS=no_profile"; exit 0; }
 PT=$(oscap info --profiles "$DS" 2>/dev/null | grep -F "$PROFILE:" | head -1 | cut -d: -f2-)
 R=/tmp/fleet-scan-$$
-sudo oscap xccdf eval --profile "$PROFILE" --results "$R-results.xml" --report "$R-report.html" "$DS" >/dev/null 2>&1
+sudo oscap xccdf eval --profile "$PROFILE" --results "$R-results.xml" --report "$R-report.html" "$DS" >"$R-out.log" 2>&1
 RC=$?
-if [ $RC -ne 0 ] && [ $RC -ne 2 ]; then echo "STATUS=eval_failed_rc_$RC"; sudo rm -f "$R-results.xml" "$R-report.html" 2>/dev/null; exit 0; fi
+if [ $RC -ne 0 ] && [ $RC -ne 2 ]; then
+  echo "STATUS=eval_failed_rc_$RC"
+  echo "DATASTREAM=$DS"
+  echo "PROFILE=$PROFILE"
+  echo "DETAIL_BEGIN"
+  tail -c 1500 "$R-out.log" 2>/dev/null | tr -d '\r'
+  echo ""
+  echo "DETAIL_END"
+  sudo rm -f "$R-results.xml" "$R-report.html" "$R-out.log" 2>/dev/null
+  exit 0
+fi
+sudo rm -f "$R-out.log" 2>/dev/null
 sudo chmod 0644 "$R-results.xml" "$R-report.html" 2>/dev/null
 PASS=$(grep -c '<result>pass</result>' "$R-results.xml" 2>/dev/null || echo 0)
 FAIL=$(grep -c '<result>fail</result>' "$R-results.xml" 2>/dev/null || echo 0)
@@ -319,6 +335,19 @@ func runScript(ctx context.Context, conn *sshgw.Conn, script string) (string, er
 	case r := <-done:
 		return string(r.out), r.err
 	}
+}
+
+// extractBlock returns the text between the begin and end markers, trimmed.
+func extractBlock(s, begin, end string) string {
+	i := strings.Index(s, begin)
+	if i < 0 {
+		return ""
+	}
+	rest := s[i+len(begin):]
+	if j := strings.Index(rest, end); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(rest)
 }
 
 func parseKV(s string) map[string]string {
