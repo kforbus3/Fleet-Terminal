@@ -24,6 +24,7 @@ func Mount(r chi.Router, d *app.Deps) {
 		pr.Use(d.Auth.RequireAuth)
 
 		pr.With(d.Auth.RequirePermission("Approval.Request")).Post("/approvals", h.create)
+		pr.With(d.Auth.RequirePermission("Approval.Request")).Get("/approvals/targets", h.targets)
 		pr.With(d.Auth.RequirePermission("Approval.Request")).Get("/approvals", h.list)
 		pr.With(d.Auth.RequirePermission("Approval.Request")).Get("/approvals/mine", h.listMine)
 		pr.With(d.Auth.RequirePermission("Approval.Request")).Get("/approvals/grants/mine", h.grantsMine)
@@ -88,6 +89,59 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		"targetKind": ar.TargetKind, "targetName": ar.TargetName, "requestedSecs": ar.RequestedSecs,
 	})
 	writeJSON(w, http.StatusCreated, ar)
+}
+
+// requestTarget is a host or group a requester can pick when filing an access
+// request, by name rather than raw UUID. hasAccess flags targets the requester
+// can already reach so the UI can hide or de-emphasize them.
+type requestTarget struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Environment string `json:"environment,omitempty"`
+	HasAccess   bool   `json:"hasAccess"`
+}
+
+// targets lists the hosts and groups a requester can request access to, so the
+// access-request form offers a searchable name picker instead of a raw ID field.
+func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r)
+	ctx := r.Context()
+
+	hosts, err := h.d.Store.ListHosts(ctx, 1000, 0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list hosts")
+		return
+	}
+	accessible, _ := h.d.Store.ListAccessibleHosts(ctx, p.UserID, p.IsSuperAdmin)
+	haveHost := make(map[uuid.UUID]bool, len(accessible))
+	for _, a := range accessible {
+		haveHost[a.ID] = true
+	}
+	hostTargets := make([]requestTarget, 0, len(hosts))
+	for _, hh := range hosts {
+		hostTargets = append(hostTargets, requestTarget{
+			ID: hh.ID.String(), Name: hh.Hostname, Environment: hh.Environment, HasAccess: haveHost[hh.ID],
+		})
+	}
+
+	groups, err := h.d.Store.ListGroups(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list groups")
+		return
+	}
+	memberNames, _ := h.d.Store.UserGroupNames(ctx, p.UserID)
+	member := make(map[string]bool, len(memberNames))
+	for _, n := range memberNames {
+		member[n] = true
+	}
+	groupTargets := make([]requestTarget, 0, len(groups))
+	for _, g := range groups {
+		groupTargets = append(groupTargets, requestTarget{
+			ID: g.ID.String(), Name: g.Name, HasAccess: member[g.Name],
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": hostTargets, "groups": groupTargets})
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {

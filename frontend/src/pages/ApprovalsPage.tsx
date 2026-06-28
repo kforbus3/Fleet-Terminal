@@ -1,12 +1,12 @@
 import { useState } from "react";
 import {
-  Box, Button, Chip, MenuItem, Paper, Stack, Tab, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Tabs, TextField, Typography,
+  Autocomplete, Box, Button, Chip, MenuItem, Paper, Stack, Tab, Table, TableBody,
+  TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createApproval, decideApproval, listApprovals, listMyApprovals,
-  type ApprovalRequest, type CreateApprovalInput,
+  createApproval, decideApproval, listApprovals, listMyApprovals, listRequestTargets,
+  type ApprovalRequest, type RequestTarget,
 } from "../api/approvals";
 
 // Duration presets for both requests and decisions. "custom" reveals a minutes
@@ -113,11 +113,15 @@ export function ApprovalsPage() {
 
   // Request form state.
   const [targetKind, setTargetKind] = useState<"host" | "group">("host");
-  const [targetId, setTargetId] = useState("");
+  const [selected, setSelected] = useState<RequestTarget[]>([]);
   const [reason, setReason] = useState("");
   const [ticketRef, setTicketRef] = useState("");
   const [reqDuration, setReqDuration] = useState("1h");
   const [reqCustom, setReqCustom] = useState("60");
+
+  // Targets to pick from, by name. Drop targets the requester can already reach.
+  const { data: targets } = useQuery({ queryKey: ["approval-targets"], queryFn: listRequestTargets });
+  const options = ((targetKind === "host" ? targets?.hosts : targets?.groups) ?? []).filter((t) => !t.hasAccess);
 
   // Per-row decision duration in the queue.
   const [decideDuration, setDecideDuration] = useState<Record<string, string>>({});
@@ -125,16 +129,19 @@ export function ApprovalsPage() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["approvals"] });
 
+  // One request is filed per selected target (the backend models a request as a
+  // single host or group), so picking several files several requests at once.
   const createMut = useMutation({
-    mutationFn: () => {
-      const input: CreateApprovalInput = {
-        targetKind, reason, ticketRef: ticketRef || undefined,
-        requestedSecs: durationToSecs(reqDuration, reqCustom),
-        ...(targetKind === "host" ? { hostId: targetId } : { groupId: targetId }),
-      };
-      return createApproval(input);
+    mutationFn: async () => {
+      const requestedSecs = durationToSecs(reqDuration, reqCustom);
+      await Promise.all(selected.map((t) =>
+        createApproval({
+          targetKind, reason, ticketRef: ticketRef || undefined, requestedSecs,
+          ...(targetKind === "host" ? { hostId: t.id } : { groupId: t.id }),
+        }),
+      ));
     },
-    onSuccess: () => { setReason(""); setTargetId(""); setTicketRef(""); refresh(); },
+    onSuccess: () => { setReason(""); setSelected([]); setTicketRef(""); refresh(); },
   });
 
   const decideMut = useMutation({
@@ -158,12 +165,28 @@ export function ApprovalsPage() {
             <Stack spacing={2}>
               <Stack direction="row" spacing={2}>
                 <TextField select size="small" label="Target kind" value={targetKind}
-                  onChange={(e) => setTargetKind(e.target.value as "host" | "group")} sx={{ minWidth: 140 }}>
+                  onChange={(e) => { setTargetKind(e.target.value as "host" | "group"); setSelected([]); }}
+                  sx={{ minWidth: 140 }}>
                   <MenuItem value="host">Host</MenuItem>
                   <MenuItem value="group">Group</MenuItem>
                 </TextField>
-                <TextField size="small" label={targetKind === "host" ? "Host ID" : "Group ID"}
-                  value={targetId} onChange={(e) => setTargetId(e.target.value)} sx={{ minWidth: 320 }} />
+                <Autocomplete
+                  multiple size="small" sx={{ flexGrow: 1, minWidth: 320 }}
+                  options={options} value={selected}
+                  onChange={(_, v) => setSelected(v)}
+                  getOptionLabel={(o) => o.name}
+                  isOptionEqualToValue={(a, b) => a.id === b.id}
+                  renderOption={(props, o) => (
+                    <li {...props} key={o.id}>
+                      {o.name}{o.environment ? ` · ${o.environment}` : ""}
+                    </li>
+                  )}
+                  renderInput={(params) => (
+                    <TextField {...params} label={targetKind === "host" ? "Hosts" : "Groups"}
+                      placeholder={selected.length ? "" : "Search by name…"} />
+                  )}
+                  noOptionsText={`No ${targetKind === "host" ? "hosts" : "groups"} available to request`}
+                />
               </Stack>
               <TextField size="small" label="Reason" value={reason}
                 onChange={(e) => setReason(e.target.value)} />
@@ -173,8 +196,10 @@ export function ApprovalsPage() {
                 onValue={setReqDuration} onCustom={setReqCustom} />
               <Box>
                 <Button variant="contained"
-                  disabled={!targetId || !reason || createMut.isPending}
-                  onClick={() => createMut.mutate()}>Submit request</Button>
+                  disabled={selected.length === 0 || !reason || createMut.isPending}
+                  onClick={() => createMut.mutate()}>
+                  {selected.length > 1 ? `Submit ${selected.length} requests` : "Submit request"}
+                </Button>
               </Box>
             </Stack>
           </Paper>

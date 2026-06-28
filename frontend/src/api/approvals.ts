@@ -37,6 +37,18 @@ export interface DecideInput {
   grantedSecs?: number;
 }
 
+export interface RequestTarget {
+  id: string;
+  name: string;
+  environment?: string;
+  hasAccess: boolean;
+}
+
+export async function listRequestTargets(): Promise<{ hosts: RequestTarget[]; groups: RequestTarget[] }> {
+  const { data } = await api.get<{ hosts: RequestTarget[]; groups: RequestTarget[] }>("/api/v1/approvals/targets");
+  return { hosts: data.hosts ?? [], groups: data.groups ?? [] };
+}
+
 export async function listApprovals(status?: string): Promise<ApprovalRequest[]> {
   const { data } = await api.get<{ approvals: ApprovalRequest[] }>("/api/v1/approvals", {
     params: status ? { status } : undefined,

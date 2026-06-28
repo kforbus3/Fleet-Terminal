@@ -108,9 +108,11 @@ issued — no separate setup step needed.
 
 ## Just-in-time access
 
-Users without permanent group access request temporary access under **Approvals → My requests**
-(reason, duration, optional ticket). Approvers act under **Approvals → Queue**. Grants expire
-automatically; a background reaper revokes elapsed grants every minute.
+Users without permanent group access request temporary access under **Approvals → My requests**.
+Pick **Host** or **Group**, then choose one or more targets from a **searchable name picker**
+(targets you already have access to are omitted) — selecting several files a request for each.
+Add a reason, duration, and optional ticket. Approvers act under **Approvals → Queue**. Grants
+expire automatically; a background reaper revokes elapsed grants every minute.
 
 ## Audit integrity
 

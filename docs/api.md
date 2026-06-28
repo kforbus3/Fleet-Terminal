@@ -281,10 +281,19 @@ Read-only access to recorded SSH sessions and their `asciicast-v2` recordings.
 | Method | Path | Required permission |
 |--------|------|---------------------|
 | POST | `/api/v1/approvals` | `Approval.Request` |
+| GET | `/api/v1/approvals/targets` | `Approval.Request` |
 | GET | `/api/v1/approvals` | `Approval.Request` (deciders see all; requesters see their own) |
 | GET | `/api/v1/approvals/mine` | `Approval.Request` |
 | GET | `/api/v1/approvals/grants/mine` | `Approval.Request` |
 | POST | `/api/v1/approvals/{id}/decide` | `Approval.Decide` |
+
+**`GET /approvals/targets`** → the hosts and groups a requester can pick (by
+name) when filing a request, so the form offers a searchable picker instead of a
+raw UUID. `hasAccess` flags targets the requester can already reach.
+```json
+{ "hosts":  [ { "id": "…", "name": "web-01", "environment": "prod", "hasAccess": false } ],
+  "groups": [ { "id": "…", "name": "dba", "hasAccess": true } ] }
+```
 
 **`POST /approvals`**
 ```json
