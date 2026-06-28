@@ -101,10 +101,10 @@ type requestTarget struct {
 
 // targets serves the access-request name picker: a server-side search over hosts
 // or groups (?kind=host|group&q=...), capped server-side so it scales to large
-// fleets. Targets the requester can already reach are excluded — there is
-// nothing to request for those.
+// fleets. It returns all name matches — including targets the requester can
+// already reach (a super admin reaches every host, and members reach their own
+// groups, so excluding them would empty the picker for exactly those users).
 func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
-	p := auth.MustPrincipal(r)
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
 	const limit = 50
@@ -117,15 +117,7 @@ func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not search hosts")
 			return
 		}
-		accessible, _ := h.d.Store.ListAccessibleHosts(ctx, p.UserID, p.IsSuperAdmin)
-		have := make(map[uuid.UUID]bool, len(accessible))
-		for _, a := range accessible {
-			have[a.ID] = true
-		}
 		for _, hh := range hosts {
-			if have[hh.ID] {
-				continue
-			}
 			out = append(out, requestTarget{ID: hh.ID.String(), Name: hh.Hostname, Environment: hh.Environment})
 		}
 	case "group":
@@ -134,15 +126,7 @@ func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not search groups")
 			return
 		}
-		memberNames, _ := h.d.Store.UserGroupNames(ctx, p.UserID)
-		member := make(map[string]bool, len(memberNames))
-		for _, n := range memberNames {
-			member[n] = true
-		}
 		for _, g := range groups {
-			if member[g.Name] {
-				continue
-			}
 			out = append(out, requestTarget{ID: g.ID.String(), Name: g.Name})
 		}
 	default:
