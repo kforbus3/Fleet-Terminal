@@ -45,6 +45,10 @@ type Service struct {
 	// installing tracks hosts with an in-flight background scanner install, so
 	// repeated "prepare" requests don't kick off duplicate installs.
 	installing sync.Map // hostID -> struct{}
+
+	// contentMu serializes the one-time download+extract of the SCAP content
+	// release into the backend cache.
+	contentMu sync.Mutex
 }
 
 func New(st *store.Store, cfg *config.Config, log *slog.Logger, gw *sshgw.Gateway, issuer *identity.Issuer) *Service {
@@ -75,32 +79,36 @@ func (s *Service) dial(ctx context.Context, h *models.Host) (*sshgw.Conn, error)
 // DiscoverProfiles reports whether the host already has oscap + SCAP content and,
 // if so, the available profiles for its datastream. It never installs anything
 // (kept fast for opening the scan dialog); the scan itself auto-installs.
-func (s *Service) DiscoverProfiles(ctx context.Context, h *models.Host) (installed bool, datastream string, profiles []models.ScanProfile, err error) {
+// exact reports whether the resolved datastream matches the host's exact OS
+// version (vs a fallback); when false the host can be auto-provisioned.
+func (s *Service) DiscoverProfiles(ctx context.Context, h *models.Host) (installed, exact bool, datastream string, profiles []models.ScanProfile, err error) {
 	conn, err := s.dial(ctx, h)
 	if err != nil {
-		return false, "", nil, err
+		return false, false, "", nil, err
 	}
 	defer conn.Close()
 	out, err := runScript(ctx, conn, discoverScript)
 	if err != nil {
-		return false, "", nil, err
+		return false, false, "", nil, err
 	}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
 		switch {
 		case strings.HasPrefix(line, "STATUS="):
 			if v := strings.TrimPrefix(line, "STATUS="); v != "ok" {
-				return false, "", nil, nil // missing scanner or content
+				return false, false, "", nil, nil // missing scanner or content
 			}
 			installed = true
 		case strings.HasPrefix(line, "DATASTREAM="):
 			datastream = strings.TrimPrefix(line, "DATASTREAM=")
+		case strings.HasPrefix(line, "EXACT="):
+			exact = strings.TrimPrefix(line, "EXACT=") == "1"
 		case strings.Contains(line, ":") && strings.HasPrefix(line, "xccdf_"):
 			id, title, _ := strings.Cut(line, ":")
 			profiles = append(profiles, models.ScanProfile{ID: strings.TrimSpace(id), Title: strings.TrimSpace(title)})
 		}
 	}
-	return installed, datastream, profiles, nil
+	return installed, exact, datastream, profiles, nil
 }
 
 // IsInstalling reports whether a background scanner install is in flight for the host.
@@ -131,6 +139,7 @@ func (s *Service) EnsureInstalled(h *models.Host) {
 			s.log.Warn("scan prepare: install", "host", h.Hostname, "err", err)
 			return
 		}
+		s.ensureContent(ctx, conn, h) // provision content matching the host OS version
 		s.log.Info("scan prepare: scanner ready", "host", h.Hostname)
 	}()
 }
@@ -156,6 +165,9 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 		return
 	}
 	defer conn.Close()
+
+	// Make sure the host has content matching its OS version before evaluating.
+	s.ensureContent(ctx, conn, h)
 
 	out, err := runScript(ctx, conn, fmt.Sprintf(scanScript, profile))
 	if err != nil {
@@ -225,6 +237,7 @@ for c in "$C/ssg-${ID}${VER}-ds.xml" "$C/ssg-${ID}-ds.xml"; do [ -f "$c" ] && DS
 [ -z "$DS" ] && { echo "STATUS=nocontent"; exit 0; }
 echo "STATUS=ok"
 echo "DATASTREAM=$DS"
+[ -f "$C/ssg-${ID}${VER}-ds.xml" ] && echo "EXACT=1" || echo "EXACT=0"
 oscap info --profiles "$DS" 2>/dev/null`
 
 // installScript installs the scanner + SCAP content if missing (the install

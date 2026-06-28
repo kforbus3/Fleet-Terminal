@@ -28,6 +28,7 @@ export interface ScanProfile {
 
 export interface ScanProfilesResponse {
   installed: boolean;
+  exact: boolean; // datastream matches the host's exact OS version
   installing: boolean;
   datastream: string;
   profiles: ScanProfile[];
@@ -38,7 +39,7 @@ export interface ScanProfilesResponse {
 export async function listScanProfiles(hostId: string): Promise<ScanProfilesResponse> {
   const { data } = await api.get<ScanProfilesResponse>(`/api/v1/hosts/${hostId}/scan/profiles`);
   return {
-    installed: data.installed, installing: data.installing,
+    installed: data.installed, exact: data.exact, installing: data.installing,
     datastream: data.datastream, profiles: data.profiles ?? [],
   };
 }

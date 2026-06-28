@@ -128,9 +128,12 @@ host (CIS, STIG, PCI-DSS, …) and defaults to the standard baseline — then **
 - **View** opens the full HTML report in a sandboxed in-app viewer; **Download** saves it for
   offline viewing. Reports are stored under `FLEET_SCAN_DIR` (`/var/lib/fleet/scans`).
 - The scan needs SCAP content matching the host's **OS version** (e.g. `ssg-debian13-ds.xml`
-  for Debian 13). If the host's distro is newer than its packaged `scap-security-guide`, results
-  come back mostly **notapplicable** — the scan row shows which `ssg-*-ds.xml` was used. Install
-  newer content (distro backports, or a ComplianceAsCode release) on the host to fix it.
+  for Debian 13). If a host's distro is newer than its packaged `scap-security-guide`, Fleet
+  **auto-provisions** the right datastream: the backend downloads the ComplianceAsCode release
+  **once** (cached under `FLEET_SCAP_CONTENT_DIR`) and pushes the matching `ssg-*-ds.xml` to the
+  host over SSH during prepare/scan — so hosts never need internet access to GitHub. Pin a
+  release with `FLEET_SCAP_CONTENT_VERSION` (default: latest); set `FLEET_SCAP_CONTENT_DIR=`
+  empty to disable auto-provisioning. The scan row shows which `ssg-*-ds.xml` was used.
 - Debian/Ubuntu have **no DISA STIG** profile; the closest hardening baseline is
   **ANSSI-BP-028 (High / Enforced)**.
 

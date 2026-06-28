@@ -517,21 +517,24 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
             </Button>
           </Stack>
 
-          {/* Profiles only populate once the scanner is installed on the host. */}
-          {prof && !prof.installed && (
+          {/* The picker needs the scanner installed AND content matching the host OS. */}
+          {prof && (!prof.installed || !prof.exact) && (
             prof.installing || prepareMut.isPending ? (
               <Alert severity="info" icon={<CircularProgress size={18} />} sx={{ mb: 2 }}>
-                Installing OpenSCAP on the host… the profile list will populate when it's ready
-                (the first install can take a few minutes). You can also just run the default profile now.
+                {prof.installed
+                  ? "Provisioning SCAP content matching this host's OS… the profile list updates when it's ready."
+                  : "Installing OpenSCAP on the host… the profile list populates when it's ready (first install can take a few minutes)."}
+                {" "}You can also run the default profile now.
               </Alert>
             ) : (
               <Alert severity="info" sx={{ mb: 2 }} action={
-                <Button color="inherit" size="small" disabled={prepareMut.isPending} onClick={() => prepareMut.mutate()}>
-                  Install scanner
+                <Button color="inherit" size="small" onClick={() => prepareMut.mutate()}>
+                  {prof.installed ? "Provision content" : "Install scanner"}
                 </Button>
               }>
-                OpenSCAP isn't installed on this host yet, so only the default profile is available.
-                Install it to choose a specific profile (CIS, STIG, …), or just run the default.
+                {prof.installed
+                  ? "This host's OS is newer than its installed SCAP content, so only older-version profiles are shown. Provision matching content to scan against the right benchmark."
+                  : "OpenSCAP isn't installed on this host yet, so only the default profile is available. Install it to choose a specific profile, or just run the default."}
               </Alert>
             )
           )}

@@ -72,7 +72,7 @@ func (h *handler) profiles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	installed, datastream, profiles, err := h.svc.DiscoverProfiles(r.Context(), host)
+	installed, exact, datastream, profiles, err := h.svc.DiscoverProfiles(r.Context(), host)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "discover profiles: "+err.Error())
 		return
@@ -81,7 +81,7 @@ func (h *handler) profiles(w http.ResponseWriter, r *http.Request) {
 		profiles = []models.ScanProfile{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"installed": installed, "installing": h.svc.IsInstalling(host.ID),
+		"installed": installed, "exact": exact, "installing": h.svc.IsInstalling(host.ID),
 		"datastream": datastream, "profiles": profiles,
 	})
 }

@@ -54,6 +54,8 @@ services:
       FLEET_JUMP_KNOWN_HOSTS: ${FLEET_JUMP_KNOWN_HOSTS:-}
       FLEET_RECORDING_DIR: /var/lib/fleet/recordings
       FLEET_SCAN_DIR: /var/lib/fleet/scans
+      FLEET_SCAP_CONTENT_DIR: /var/lib/fleet/scap-content
+      FLEET_SCAP_CONTENT_VERSION: ${FLEET_SCAP_CONTENT_VERSION:-}
       FLEET_MAX_UPLOAD_BYTES: ${FLEET_MAX_UPLOAD_BYTES:-5368709120}
       # WireGuard overlay — managed-host enrollment uses these. Empty falls back
       # to the binary's defaults (see .env.example). FLEET_WG_JUMP_ENDPOINT MUST
@@ -93,6 +95,7 @@ services:
     volumes:
       - recordings:/var/lib/fleet/recordings
       - scans:/var/lib/fleet/scans
+      - scap-content:/var/lib/fleet/scap-content
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +122,7 @@ volumes:
   redisdata:
   recordings:
   scans:
+  scap-content:
 
 networks:
   fleet:
