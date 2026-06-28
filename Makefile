@@ -27,8 +27,20 @@ up-app: env ## Start only the application stack (no test fabric)
 .PHONY: up-single
 up-single: env ## Single-server production: app stack + co-located jump host (VPN server)
 	$(COMPOSE_SINGLE) up -d --build
-	@echo "Single-server stack up. Set FLEET_WG_JUMP_ENDPOINT to the host's public"
-	@echo "address:port and open that UDP port; the jump host auto-trusts the CA."
+	@echo "Single-server stack up. Set FLEET_WG_JUMP_ENDPOINT to the host's address:port"
+	@echo "(public IP/DNS, or LAN IP if managed hosts are internal) and open that UDP port."
+
+.PHONY: ps-single
+ps-single: ## Single-server: show running services
+	$(COMPOSE_SINGLE) ps
+
+.PHONY: logs-single
+logs-single: ## Single-server: tail logs
+	$(COMPOSE_SINGLE) logs -f --tail=100
+
+.PHONY: down-single
+down-single: ## Single-server: stop the stack (data volumes preserved)
+	$(COMPOSE_SINGLE) down
 
 .PHONY: trust
 trust: ## Seed the test-fabric nodes with the backend's CA (run once after `make up`)
