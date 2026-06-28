@@ -79,10 +79,15 @@ func (m *Monitor) sweep(ctx context.Context) {
 		if !h.Enrolled {
 			continue
 		}
-		st := m.probe(ctx, signer, &h)
+		st, inv := m.probe(ctx, signer, &h)
 		if err := m.store.UpdateStatus(ctx, h.ID, st); err != nil {
 			m.log.Warn("monitor update status", "host", h.Hostname, "err", err)
 			continue
+		}
+		if inv != nil {
+			if err := m.store.UpsertInventory(ctx, h.ID, *inv); err != nil {
+				m.log.Warn("monitor update inventory", "host", h.Hostname, "err", err)
+			}
 		}
 		m.hub.Broadcast("host.status", map[string]any{
 			"hostId": h.ID, "hostname": h.Hostname, "status": st.Status,
@@ -97,8 +102,10 @@ func (m *Monitor) sweep(ctx context.Context) {
 }
 
 // probe runs a lightweight authenticated SSH command through the jump host and
-// records latency, uptime, and SSH/WireGuard health.
-func (m *Monitor) probe(ctx context.Context, signer ssh.Signer, h *models.Host) models.HostStatus {
+// records latency, uptime, and SSH/WireGuard health. When the host is online and
+// its inventory is missing or stale, it also re-collects host facts (distro,
+// kernel, etc.) over the same connection and returns them for persistence.
+func (m *Monitor) probe(ctx context.Context, signer ssh.Signer, h *models.Host) (models.HostStatus, *models.HostInventory) {
 	now := time.Now()
 	st := models.HostStatus{Status: "unknown", CheckedAt: &now}
 
@@ -121,7 +128,7 @@ func (m *Monitor) probe(ctx context.Context, signer ssh.Signer, h *models.Host) 
 		st.SSHOK = false
 		st.LastError = trunc(errStr(dialErr), 240)
 		st.LastFailureAt = &now
-		return st
+		return st, nil
 	}
 	defer conn.Close()
 	st.SSHOK = true
@@ -141,7 +148,62 @@ func (m *Monitor) probe(ctx context.Context, signer ssh.Signer, h *models.Host) 
 			}
 		}
 	}
-	return st
+
+	// Refresh host facts at most once per inventoryTTL — they change rarely
+	// (reboots, package upgrades), so there's no need to re-collect every probe.
+	var inv *models.HostInventory
+	if inventoryStale(h.Inventory) {
+		if collected, ok := collectInventory(conn); ok {
+			inv = &collected
+		}
+	}
+	return st, inv
+}
+
+// inventoryTTL bounds how often the monitor re-collects host facts.
+const inventoryTTL = time.Hour
+
+func inventoryStale(inv *models.HostInventory) bool {
+	return inv == nil || inv.CollectedAt == nil || time.Since(*inv.CollectedAt) > inventoryTTL
+}
+
+// collectInventory gathers host facts over an open connection: kernel, arch,
+// distro + version, SSH version, CPU count, and total memory. Best-effort — a
+// missing field is left zero rather than failing the whole probe.
+func collectInventory(conn *sshgw.Conn) (models.HostInventory, bool) {
+	const cmd = `uname -s; uname -r; uname -m; ` +
+		`(. /etc/os-release 2>/dev/null; echo "$NAME $VERSION_ID"); ` +
+		`ssh -V 2>&1 | head -1; nproc 2>/dev/null; ` +
+		`awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null`
+	out, err := runCmd(conn, cmd)
+	if err != nil {
+		return models.HostInventory{}, false
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	field := func(i int) string {
+		if i < len(lines) {
+			return strings.TrimSpace(lines[i])
+		}
+		return ""
+	}
+	now := time.Now()
+	inv := models.HostInventory{
+		OSName:        field(0), // uname -s; overridden by /etc/os-release below when present
+		KernelVersion: field(1),
+		Architecture:  field(2),
+		SSHVersion:    field(4),
+		CollectedAt:   &now,
+	}
+	if os := field(3); os != "" {
+		inv.OSName = os
+	}
+	if n, perr := strconv.Atoi(field(5)); perr == nil {
+		inv.CPUCount = n
+	}
+	if kb, perr := strconv.ParseInt(field(6), 10, 64); perr == nil {
+		inv.MemoryMB = kb / 1024
+	}
+	return inv, true
 }
 
 func runCmd(conn *sshgw.Conn, cmd string) (string, error) {

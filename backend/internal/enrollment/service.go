@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -268,8 +269,8 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 		return privRun(hostClient, isRoot, sudoPass, script)
 	}
 
-	// 3) Collect host facts.
-	if facts, ferr := run(hostClient, "uname -s; uname -r; uname -m; (. /etc/os-release 2>/dev/null; echo \"$NAME $VERSION_ID\"); ssh -V 2>&1 | head -1"); ferr == nil {
+	// 3) Collect host facts (same field order as the monitor's periodic refresh).
+	if facts, ferr := run(hostClient, "uname -s; uname -r; uname -m; (. /etc/os-release 2>/dev/null; echo \"$NAME $VERSION_ID\"); ssh -V 2>&1 | head -1; nproc 2>/dev/null; awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null"); ferr == nil {
 		s.recordFacts(ctx, host.ID, facts)
 		step("collect_facts", "ok", oneLine(facts))
 	} else {
@@ -660,6 +661,16 @@ func (s *Service) recordFacts(ctx context.Context, hostID uuid.UUID, facts strin
 	}
 	if len(lines) > 4 {
 		inv.SSHVersion = strings.TrimSpace(lines[4])
+	}
+	if len(lines) > 5 {
+		if n, err := strconv.Atoi(strings.TrimSpace(lines[5])); err == nil {
+			inv.CPUCount = n
+		}
+	}
+	if len(lines) > 6 {
+		if kb, err := strconv.ParseInt(strings.TrimSpace(lines[6]), 10, 64); err == nil {
+			inv.MemoryMB = kb / 1024
+		}
 	}
 	_ = s.store.UpsertInventory(ctx, hostID, inv)
 }

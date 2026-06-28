@@ -15,12 +15,13 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import FolderIcon from "@mui/icons-material/Folder";
 import LockPersonIcon from "@mui/icons-material/LockPerson";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { Alert, CircularProgress, List, ListItem, ListItemText } from "@mui/material";
 import { MenuItem, ListItemSecondaryAction, Divider } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addHostGroup, addHostUser, createHost, deleteHost, enrollHost, finishEnroll,
-  getHostAccess, listHosts, nextWGAddress, removeHostGroup, removeHostUser,
+  getHost, getHostAccess, listHosts, nextWGAddress, removeHostGroup, removeHostUser,
   type EnrollmentResult, type EnrollParams, type Host, type HostInput,
 } from "../api/hosts";
 import { listGroups, listUsers } from "../api/admin";
@@ -191,6 +192,7 @@ export function HostsPage() {
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [enrollTarget, setEnrollTarget] = useState<Host | null>(null);
   const [accessTarget, setAccessTarget] = useState<Host | null>(null);
+  const [detailsTarget, setDetailsTarget] = useState<Host | null>(null);
 
   const createMut = useMutation({
     mutationFn: createHost,
@@ -299,9 +301,14 @@ export function HostsPage() {
       valueFormatter: (value) => fmtDate(value ? String(value) : undefined),
     },
     {
-      field: "actions", headerName: "Actions", width: 230, sortable: false, filterable: false,
+      field: "actions", headerName: "Actions", width: 260, sortable: false, filterable: false,
       renderCell: (params) => (
         <Stack direction="row" spacing={0.5}>
+          <Tooltip title="Host details">
+            <IconButton size="small" onClick={() => setDetailsTarget(params.row)}>
+              <InfoOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           <Tooltip title="Open terminal in a new tab">
             <IconButton
               size="small" color="primary"
@@ -414,8 +421,88 @@ export function HostsPage() {
         onClose={() => setEnrollOpen(false)}
       />
       <HostAccessDialog key={accessTarget?.id ?? "access-none"} host={accessTarget} onClose={() => setAccessTarget(null)} />
+
+      <HostDetailsDialog key={detailsTarget?.id ?? "details-none"} host={detailsTarget} onClose={() => setDetailsTarget(null)} />
     </Box>
   );
+}
+
+// HostDetailsDialog shows collected facts about a host (distro, kernel, CPU,
+// memory) plus live status. It fetches the single host on demand — so the list
+// payload stays light at scale — and seeds from the row for an instant render,
+// then refreshes to the latest monitor-collected values.
+function HostDetailsDialog({ host, onClose }: { host: Host | null; onClose: () => void }) {
+  const { data } = useQuery({
+    queryKey: ["host", host?.id],
+    queryFn: () => getHost(host!.id),
+    enabled: Boolean(host),
+    initialData: host ?? undefined,
+  });
+  const h = data ?? host;
+  const inv = h?.inventory;
+  const st = h?.status;
+  return (
+    <Dialog open={Boolean(host)} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>{h?.hostname ?? "Host"} · details</DialogTitle>
+      <DialogContent dividers>
+        <Typography variant="overline" color="text.secondary">System</Typography>
+        <DetailRows rows={[
+          ["Operating system", inv?.osName],
+          ["OS version", inv?.osVersion],
+          ["Kernel", inv?.kernelVersion],
+          ["Architecture", inv?.architecture],
+          ["CPUs", inv?.cpuCount ? String(inv.cpuCount) : ""],
+          ["Memory", fmtMem(inv?.memoryMb)],
+          ["SSH", inv?.sshVersion],
+          ["Facts collected", inv?.collectedAt ? fmtDate(inv.collectedAt) : ""],
+        ]} />
+        <Typography variant="overline" color="text.secondary" sx={{ display: "block", mt: 2 }}>Status</Typography>
+        <DetailRows rows={[
+          ["State", st?.status],
+          ["Uptime", fmtUptime(st?.uptimeSeconds)],
+          ["Latency", st?.latencyMs != null ? `${st.latencyMs} ms` : ""],
+          ["WireGuard", st ? (st.wgOk ? "healthy" : "—") : ""],
+          ["Last checked", st?.checkedAt ? fmtDate(st.checkedAt) : ""],
+        ]} />
+        {!inv && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            No facts collected yet — they're gathered at enrollment and refreshed periodically by the monitor.
+          </Typography>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function DetailRows({ rows }: { rows: [string, string | undefined][] }) {
+  return (
+    <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+      {rows.map(([label, value]) => (
+        <Stack key={label} direction="row" spacing={2}>
+          <Typography variant="body2" color="text.secondary" sx={{ width: 150, flexShrink: 0 }}>{label}</Typography>
+          <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-word" }}>{value || "—"}</Typography>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+function fmtMem(mb?: number): string {
+  if (!mb) return "";
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+}
+
+function fmtUptime(secs?: number): string {
+  if (!secs || secs <= 0) return "";
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 // HostAccessDialog manages who can reach a host: the groups it belongs to and

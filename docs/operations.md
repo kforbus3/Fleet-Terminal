@@ -93,6 +93,11 @@ The monitor runs authenticated SSH health checks (no ICMP) against enrolled host
 updating status (online/offline/unknown), latency, uptime, and WireGuard handshake freshness.
 The dashboard subscribes to a WebSocket and updates in real time.
 
+During the same check it also re-collects **host facts** — distro + version, kernel,
+architecture, CPU count, memory, and SSH version — but at most once an hour per host (over the
+already-open connection, so it adds no extra SSH dials). View them per host via the **Details**
+(ⓘ) button on the **Hosts** page, which fetches that single host on demand.
+
 ## Two-factor authentication (TOTP / passkeys)
 
 1. **Security → Set up authenticator**. **Scan the QR code** (generated in the browser, so the
