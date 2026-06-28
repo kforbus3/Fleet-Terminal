@@ -425,11 +425,30 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"version":     s.Version,         // build label (FLEET_VERSION; "dev" if unset)
 		"environment": s.Cfg.Environment, // runtime mode (FLEET_ENV: production|development)
+		"appName":     s.appName(r),      // customizable brand name (settings.branding)
 	})
+}
+
+// appName returns the configured application/brand name from the branding
+// setting, falling back to the default. Served publicly so the login and
+// bootstrap screens (pre-auth) can render it.
+func (s *Server) appName(r *http.Request) string {
+	const def = "Fleet Terminal"
+	raw, err := s.Store.GetSetting(r.Context(), "branding")
+	if err != nil {
+		return def
+	}
+	var b struct {
+		AppName string `json:"app_name"`
+	}
+	if err := json.Unmarshal(raw, &b); err != nil || strings.TrimSpace(b.AppName) == "" {
+		return def
+	}
+	return b.AppName
 }
 
 // recoverer converts panics into 500s and logs them.

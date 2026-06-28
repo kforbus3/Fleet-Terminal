@@ -93,7 +93,7 @@ export function DashboardPage() {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Typography variant="h5" sx={{ flexGrow: 1 }}>Fleet Overview</Typography>
+        <Typography variant="h5" sx={{ flexGrow: 1 }}>Overview</Typography>
         {version?.environment && (
           <Chip
             size="small" variant="outlined"

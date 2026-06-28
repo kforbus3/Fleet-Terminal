@@ -15,6 +15,7 @@ import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { downloadDir, downloadFile, listDir, uploadFile } from "../api/sftp";
 import { getHost } from "../api/hosts";
+import { useDocumentTitle } from "../api/branding";
 
 interface Transfer {
   id: string;
@@ -51,9 +52,7 @@ export function FilesPage() {
     queryFn: () => getHost(hostId!),
     enabled: !!hostId,
   });
-  useEffect(() => {
-    if (host?.hostname) document.title = `Files · ${host.hostname} — Fleet Terminal`;
-  }, [host?.hostname]);
+  useDocumentTitle(host?.hostname ? `Files · ${host.hostname}` : undefined);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["sftp", hostId, path],

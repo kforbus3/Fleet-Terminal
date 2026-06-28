@@ -48,6 +48,7 @@ export function SettingsPage() {
     <Box>
       <Typography variant="h5" sx={{ mb: 2 }}>System Settings</Typography>
 
+      <BrandingCard current={settings["branding"]} />
       <WGSettingsCard current={settings["wireguard"]} />
       <RetentionCard current={settings["recordings"]} />
       <BackupCard />
@@ -100,6 +101,44 @@ export function SettingsPage() {
         </DialogActions>
       </Dialog>
     </Box>
+  );
+}
+
+// BrandingCard customizes the application name shown across the UI (login, top
+// bar, dashboard, browser title). Stored in the `branding` setting and served
+// publicly via /version. Saving invalidates the version query so the new name
+// takes effect immediately without a reload.
+function BrandingCard({ current }: { current: unknown }) {
+  const qc = useQueryClient();
+  const cur = (current ?? {}) as { app_name?: string };
+  const [name, setName] = useState(cur.app_name ?? "");
+  const [saved, setSaved] = useState(false);
+  const save = useMutation({
+    mutationFn: () => setSetting("branding", { app_name: name.trim() || "Fleet Terminal" }),
+    onSuccess: () => {
+      setSaved(true);
+      void qc.invalidateQueries({ queryKey: ["settings"] });
+      void qc.invalidateQueries({ queryKey: ["version"] });
+    },
+  });
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+      <Typography variant="h6">Branding</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+        The application name shown on the login screen, the top bar, the dashboard, and the
+        browser tab. Leave blank to restore the default.
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="flex-start">
+        <TextField
+          label="Application name" value={name}
+          onChange={(e) => { setName(e.target.value); setSaved(false); }}
+          placeholder="Fleet Terminal" sx={{ flexGrow: 1, maxWidth: 360 }}
+        />
+        <Button variant="contained" sx={{ mt: 1 }} disabled={save.isPending} onClick={() => save.mutate()}>
+          {saved ? "Saved" : "Save"}
+        </Button>
+      </Stack>
+    </Paper>
   );
 }
 

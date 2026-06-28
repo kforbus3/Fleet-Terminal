@@ -8,12 +8,15 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { bootstrapStatus, mfaSetupBegin } from "../api/auth";
 import { webauthnSupported } from "../api/webauthn";
+import { useAppName, useDocumentTitle } from "../api/branding";
 
 // Credentials login form. On success the auth store holds the access token and
 // principal; we then route to the dashboard. On first run (no users yet) we send
 // the operator to the bootstrap wizard instead of showing a sign-in form.
 export function LoginPage() {
   const navigate = useNavigate();
+  const appName = useAppName();
+  useDocumentTitle();
   const login = useAuthStore((s) => s.login);
   const verifyMfa = useAuthStore((s) => s.verifyMfa);
   const verifyPasskey = useAuthStore((s) => s.verifyPasskey);
@@ -92,7 +95,7 @@ export function LoginPage() {
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 3 }}>
             <TerminalIcon color="primary" />
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Fleet Terminal
+              {appName}
             </Typography>
           </Stack>
           <Typography variant="h5" gutterBottom>

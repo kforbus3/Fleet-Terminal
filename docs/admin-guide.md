@@ -162,6 +162,11 @@ dashboards.
 | `lockout_policy` | max 5 failed, 15 min lockout | account lockout |
 | `session_policy` | idle 30 min, absolute 12 h | session lifetime |
 | `require_mfa` | `{"enabled": false}` | when on, **all** users must enroll a second factor (Users → *Require MFA for all*) |
+| `branding` | `{"app_name": "Fleet Terminal"}` | application name shown on the login screen, top bar, dashboard, and browser tab |
+
+The **Settings → Branding** card edits the application name in the UI; the change
+takes effect immediately (no rebuild) and is served publicly so the login screen
+reflects it.
 
 Per-IP rate limits and session/cert TTLs are environment variables
 (`FLEET_RATE_LIMIT_*`, `FLEET_SESSION_*`, `FLEET_*_TTL`) — see

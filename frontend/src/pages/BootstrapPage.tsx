@@ -6,12 +6,15 @@ import {
 import TerminalIcon from "@mui/icons-material/Terminal";
 import { useNavigate } from "react-router-dom";
 import { bootstrapInit, bootstrapStatus } from "../api/auth";
+import { useAppName, useDocumentTitle } from "../api/branding";
 
 // First-run wizard. Creates the initial Super Administrator while the platform
 // has no accounts; once any user exists the backend reports the wizard closed
 // and we redirect to the login screen.
 export function BootstrapPage() {
   const navigate = useNavigate();
+  const appName = useAppName();
+  useDocumentTitle();
   const [checking, setChecking] = useState(true);
   const [available, setAvailable] = useState(false);
   const [username, setUsername] = useState("");
@@ -82,7 +85,7 @@ export function BootstrapPage() {
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 3 }}>
             <TerminalIcon color="primary" />
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Fleet Terminal
+              {appName}
             </Typography>
           </Stack>
           <Typography variant="h5" gutterBottom>

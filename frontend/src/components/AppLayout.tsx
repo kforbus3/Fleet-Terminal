@@ -23,6 +23,7 @@ import LogoutIcon from "@mui/icons-material/Logout";
 import { Link as RouterLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useUIStore } from "../store/ui";
 import { useAuthStore } from "../store/auth";
+import { useAppName, useDocumentTitle } from "../api/branding";
 
 const DRAWER_WIDTH = 232;
 
@@ -54,6 +55,8 @@ export function AppLayout() {
   const logout = useAuthStore((s) => s.logout);
   const username = useAuthStore((s) => s.user?.username);
   const navigate = useNavigate();
+  const appName = useAppName();
+  useDocumentTitle();
 
   const handleLogout = async () => {
     await logout();
@@ -72,7 +75,7 @@ export function AppLayout() {
           </Tooltip>
           <TerminalIcon sx={{ mr: 1 }} />
           <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 600 }}>
-            Fleet Terminal
+            {appName}
           </Typography>
           <Tooltip title="Toggle theme">
             <IconButton color="inherit" onClick={toggleMode}>

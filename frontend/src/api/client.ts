@@ -30,6 +30,7 @@ api.interceptors.request.use((cfg) => {
 export interface VersionInfo {
   version: string;
   environment?: string;
+  appName?: string;
 }
 
 export async function getVersion(): Promise<VersionInfo> {

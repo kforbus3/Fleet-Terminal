@@ -7,6 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "../store/auth";
 import { getHost } from "../api/hosts";
+import { useDocumentTitle } from "../api/branding";
 
 type Status = "connecting" | "connected" | "closed" | "error";
 
@@ -29,9 +30,7 @@ export function TerminalPage() {
   const hostname = host?.hostname ?? "";
 
   // Reflect the host in the browser tab title.
-  useEffect(() => {
-    if (hostname) document.title = `${hostname} — Fleet Terminal`;
-  }, [hostname]);
+  useDocumentTitle(hostname || undefined);
 
   useEffect(() => {
     if (!containerRef.current || !hostId || !accessToken) return;
