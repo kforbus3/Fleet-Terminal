@@ -71,8 +71,14 @@ export function FilesPage() {
   };
   const update = (id: string, loaded: number, total: number) =>
     setTransfers((t) => t.map((x) => (x.id === id ? { ...x, loaded, total } : x)));
-  const finish = (id: string, status: Transfer["status"]) =>
+  const finish = (id: string, status: Transfer["status"]) => {
     setTransfers((t) => t.map((x) => (x.id === id ? { ...x, status } : x)));
+    // Auto-dismiss successful transfers shortly after completion so the bar
+    // doesn't linger; failures/cancellations stay until manually cleared.
+    if (status === "done") {
+      setTimeout(() => setTransfers((t) => t.filter((x) => x.id !== id)), 3500);
+    }
+  };
   const cancel = (t: Transfer) => {
     t.controller.abort();
     finish(t.id, "cancelled");
@@ -169,24 +175,29 @@ export function FilesPage() {
           <Stack spacing={1}>
             {transfers.map((t) => {
               const pct = t.total > 0 ? Math.round((t.loaded / t.total) * 100) : 0;
+              // All bytes sent but the server is still committing (writing the
+              // remote file / responding) — show this instead of a stuck 100%.
+              const finalizing = t.status === "active" && t.total > 0 && t.loaded >= t.total;
               return (
                 <Box key={t.id}>
                   <Stack direction="row" spacing={1} alignItems="center">
                     <Chip size="small" label={t.dir === "up" ? "↑" : "↓"} />
                     <Typography variant="body2" sx={{ flexGrow: 1 }} noWrap>{t.name}</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {t.status === "active"
-                        ? `${formatBytes(t.loaded)}${t.total ? " / " + formatBytes(t.total) : ""}${t.total ? ` (${pct}%)` : ""}`
-                        : t.status}
+                      {finalizing
+                        ? "finalizing…"
+                        : t.status === "active"
+                          ? `${formatBytes(t.loaded)}${t.total ? " / " + formatBytes(t.total) : ""}${t.total ? ` (${pct}%)` : ""}`
+                          : t.status}
                     </Typography>
-                    {t.status === "active" && (
+                    {t.status === "active" && !finalizing && (
                       <IconButton size="small" onClick={() => cancel(t)} title="Cancel">
                         <CloseIcon fontSize="small" />
                       </IconButton>
                     )}
                   </Stack>
                   <LinearProgress
-                    variant={t.status === "active" && t.total > 0 ? "determinate" : t.status === "active" ? "indeterminate" : "determinate"}
+                    variant={finalizing || (t.status === "active" && t.total === 0) ? "indeterminate" : "determinate"}
                     value={t.status === "done" ? 100 : pct}
                     color={t.status === "error" ? "error" : t.status === "done" ? "success" : "primary"}
                     sx={{ mt: 0.5, height: 6, borderRadius: 3 }}

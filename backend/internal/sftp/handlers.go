@@ -264,10 +264,17 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "create: "+err.Error())
 		return
 	}
-	defer dst.Close()
 	rec, _ := h.d.Store.RecordSFTPTransfer(r.Context(), store.SFTPTransferInput{
 		UserID: &p.UserID, HostID: &host.ID, Direction: "upload", RemotePath: remote, Status: "started",
 	})
+	uploadFailed := func(status int, msg string) {
+		_ = dst.Close()
+		_ = client.Remove(remote)
+		if rec != nil {
+			_ = h.d.Store.CompleteSFTPTransfer(r.Context(), rec.ID, 0, "failed")
+		}
+		writeError(w, status, msg)
+	}
 	// Enforce the configured cap (0 = unlimited) and REJECT oversized uploads
 	// rather than silently truncating. The partial remote file is removed.
 	body := r.Body
@@ -276,18 +283,21 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	n, cerr := io.Copy(dst, body)
 	if cerr != nil {
-		_ = dst.Close()
-		_ = client.Remove(remote)
-		if rec != nil {
-			_ = h.d.Store.CompleteSFTPTransfer(r.Context(), rec.ID, n, "failed")
-		}
 		var mbe *http.MaxBytesError
 		if errors.As(cerr, &mbe) {
-			writeError(w, http.StatusRequestEntityTooLarge,
+			uploadFailed(http.StatusRequestEntityTooLarge,
 				fmt.Sprintf("file exceeds the %d-byte upload limit", h.d.Cfg.MaxUploadBytes))
 			return
 		}
-		writeError(w, http.StatusBadGateway, "write: "+cerr.Error())
+		uploadFailed(http.StatusBadGateway, "write: "+cerr.Error())
+		return
+	}
+	// Close (flush + commit) the remote file BEFORE responding, so it is fully
+	// written and visible to a subsequent directory listing. Closing after the
+	// response (a deferred Close) raced the client's post-upload refetch, which
+	// is why an uploaded file only appeared after a manual page refresh.
+	if err := dst.Close(); err != nil {
+		uploadFailed(http.StatusBadGateway, "finalize upload: "+err.Error())
 		return
 	}
 	h.finishTransfer(r, rec, n)
