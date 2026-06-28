@@ -10,11 +10,14 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import DnsIcon from "@mui/icons-material/Dns";
+import SecurityIcon from "@mui/icons-material/Security";
+import { Checkbox, FormGroup } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createUser, deleteUser, getGlobalRequireMFA, listUsers, resetUserMFA, resetUserPassword,
-  setGlobalRequireMFA, setUserDisabled, setUserRequireMFA, terminateUserSessions,
-  unlockUser, updateUser, userHosts, userLoginHistory,
+  assignUserRole, createUser, deleteUser, getGlobalRequireMFA, listRoles, listUsers,
+  removeUserRole, resetUserMFA, resetUserPassword, setGlobalRequireMFA, setUserDisabled,
+  setUserRequireMFA, terminateUserSessions, unlockUser, updateUser, userHosts,
+  userLoginHistory,
   type AuthEvent, type CreateUserInput, type User, type UserHostsResponse,
 } from "../api/admin";
 
@@ -37,6 +40,14 @@ export function UsersPage() {
   const [snack, setSnack] = useState<string | null>(null);
   const [history, setHistory] = useState<{ user: User; events: AuthEvent[] } | null>(null);
   const [hostsView, setHostsView] = useState<{ user: User; data: UserHostsResponse } | null>(null);
+  const [rolesUser, setRolesUser] = useState<User | null>(null);
+
+  const { data: allRoles = [] } = useQuery({ queryKey: ["roles"], queryFn: listRoles });
+  const roleMut = useMutation({
+    mutationFn: ({ userId, roleId, assign }: { userId: string; roleId: string; assign: boolean }) =>
+      assign ? assignUserRole(userId, roleId) : removeUserRole(userId, roleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
 
   const { data: globalMfa = false } = useQuery({ queryKey: ["global-require-mfa"], queryFn: getGlobalRequireMFA });
   const globalMfaMut = useMutation({
@@ -132,6 +143,9 @@ export function UsersPage() {
                       try { setHostsView({ user: u, data: await userHosts(u.id) }); }
                       catch { setSnack("Failed to load hosts"); }
                     }}><DnsIcon fontSize="small" /></IconButton>
+                  </Tooltip>
+                  <Tooltip title="Manage roles">
+                    <IconButton size="small" onClick={() => setRolesUser(u)}><SecurityIcon fontSize="small" /></IconButton>
                   </Tooltip>
                   <Tooltip title="Edit">
                     <IconButton size="small" onClick={() => setEditing(u)}><EditIcon fontSize="small" /></IconButton>
@@ -284,6 +298,40 @@ export function UsersPage() {
           </List>
         </DialogContent>
         <DialogActions><Button onClick={() => setHostsView(null)}>Close</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(rolesUser)} onClose={() => setRolesUser(null)} fullWidth maxWidth="xs">
+        <DialogTitle>Roles — {rolesUser?.username}</DialogTitle>
+        <DialogContent dividers>
+          {(() => {
+            // Use live user data so checkboxes reflect assignments after toggling.
+            const live = users.find((u) => u.id === rolesUser?.id) ?? rolesUser;
+            const assigned = new Set(live?.roles ?? []);
+            return (
+              <FormGroup>
+                {allRoles.map((r) => (
+                  <FormControlLabel
+                    key={r.id}
+                    control={
+                      <Checkbox
+                        checked={assigned.has(r.name)}
+                        disabled={roleMut.isPending}
+                        onChange={(e) =>
+                          rolesUser && roleMut.mutate({ userId: rolesUser.id, roleId: r.id, assign: e.target.checked })
+                        }
+                      />
+                    }
+                    label={r.name}
+                  />
+                ))}
+                {allRoles.length === 0 && (
+                  <Typography variant="body2" color="text.secondary">No roles defined.</Typography>
+                )}
+              </FormGroup>
+            );
+          })()}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setRolesUser(null)}>Close</Button></DialogActions>
       </Dialog>
 
       <Snackbar

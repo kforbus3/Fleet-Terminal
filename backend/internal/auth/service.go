@@ -106,6 +106,19 @@ func (s *Service) applyFailure(ctx context.Context, userID uuid.UUID) {
 	}
 }
 
+// PasswordPolicy returns the active password policy from the settings store,
+// falling back to DefaultPolicy when unset. Read fresh on every call so changes
+// in Settings take effect immediately (no restart).
+func (s *Service) PasswordPolicy(ctx context.Context) PasswordPolicy {
+	p := DefaultPolicy
+	var raw json.RawMessage
+	if err := s.store.Pool().QueryRow(ctx,
+		`SELECT value FROM settings WHERE key='password_policy'`).Scan(&raw); err == nil {
+		_ = json.Unmarshal(raw, &p) // overlays only the fields present in the setting
+	}
+	return p
+}
+
 func (s *Service) lockoutPolicy(ctx context.Context) (maxFailed, lockoutMinutes int) {
 	maxFailed, lockoutMinutes = 5, 15
 	var raw json.RawMessage

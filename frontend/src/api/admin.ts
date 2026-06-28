@@ -83,6 +83,14 @@ export async function unlockUser(id: string): Promise<void> {
   await api.post(`/api/v1/users/${id}/unlock`);
 }
 
+export async function assignUserRole(userId: string, roleId: string): Promise<void> {
+  await api.post(`/api/v1/users/${userId}/roles/${roleId}`);
+}
+
+export async function removeUserRole(userId: string, roleId: string): Promise<void> {
+  await api.delete(`/api/v1/users/${userId}/roles/${roleId}`);
+}
+
 export async function setUserRequireMFA(id: string, require: boolean): Promise<void> {
   await api.post(`/api/v1/users/${id}/require-mfa`, { require });
 }

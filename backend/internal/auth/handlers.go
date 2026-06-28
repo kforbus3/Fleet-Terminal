@@ -312,7 +312,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "current password is incorrect")
 		return
 	}
-	if err := DefaultPolicy.Validate(req.NewPassword); err != nil {
+	if err := h.svc.PasswordPolicy(r.Context()).Validate(req.NewPassword); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -390,13 +390,17 @@ export function HostsPage() {
           sx={{ "& .MuiDataGrid-cell": { alignItems: "flex-start", py: 0.5 } }}
         />
       </Box>
+      {/* key forces a fresh component (and fresh form state) on each open, so a
+          previous host's typed values never bleed into the next. */}
       <NewHostDialog
+        key={dialogOpen ? "new-open" : "new-closed"}
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         onSubmit={(input) => createMut.mutate(input)}
         submitting={createMut.isPending}
       />
       <EnrollCredsDialog
+        key={enrollTarget?.id ?? "enroll-none"}
         host={enrollTarget}
         onClose={() => setEnrollTarget(null)}
         onSubmit={(params) => enrollTarget && enrollMut.mutate({ id: enrollTarget.id, params })}
@@ -409,7 +413,7 @@ export function HostsPage() {
         error={enrollError}
         onClose={() => setEnrollOpen(false)}
       />
-      <HostAccessDialog host={accessTarget} onClose={() => setAccessTarget(null)} />
+      <HostAccessDialog key={accessTarget?.id ?? "access-none"} host={accessTarget} onClose={() => setAccessTarget(null)} />
     </Box>
   );
 }

@@ -59,7 +59,7 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password is required")
 		return
 	}
-	if err := auth.DefaultPolicy.Validate(rq.Password); err != nil {
+	if err := h.d.Auth.PasswordPolicy(r.Context()).Validate(rq.Password); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -178,7 +178,7 @@ func (h *handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "newPassword is required")
 		return
 	}
-	if err := auth.DefaultPolicy.Validate(rq.NewPassword); err != nil {
+	if err := h.d.Auth.PasswordPolicy(r.Context()).Validate(rq.NewPassword); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

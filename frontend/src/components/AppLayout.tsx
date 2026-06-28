@@ -19,8 +19,10 @@ import WorkHistoryIcon from "@mui/icons-material/WorkHistory";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import MenuIcon from "@mui/icons-material/Menu";
-import { Link as RouterLink, Outlet, useLocation } from "react-router-dom";
+import LogoutIcon from "@mui/icons-material/Logout";
+import { Link as RouterLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useUIStore } from "../store/ui";
+import { useAuthStore } from "../store/auth";
 
 const DRAWER_WIDTH = 232;
 
@@ -49,6 +51,14 @@ export function AppLayout() {
   const toggleMode = useUIStore((s) => s.toggleMode);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const logout = useAuthStore((s) => s.logout);
+  const username = useAuthStore((s) => s.user?.username);
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <Box sx={{ display: "flex" }}>
@@ -67,6 +77,16 @@ export function AppLayout() {
           <Tooltip title="Toggle theme">
             <IconButton color="inherit" onClick={toggleMode}>
               {mode === "dark" ? <LightModeIcon /> : <DarkModeIcon />}
+            </IconButton>
+          </Tooltip>
+          {username && (
+            <Typography variant="body2" sx={{ ml: 1, mr: 0.5, opacity: 0.85 }}>
+              {username}
+            </Typography>
+          )}
+          <Tooltip title="Sign out">
+            <IconButton color="inherit" onClick={handleLogout}>
+              <LogoutIcon />
             </IconButton>
           </Tooltip>
         </Toolbar>
