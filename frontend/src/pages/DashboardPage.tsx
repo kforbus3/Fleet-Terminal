@@ -40,7 +40,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const has = useAuthStore((s) => s.has);
 
-  const { data: version, isError: backendDown } = useQuery({ queryKey: ["version"], queryFn: getVersion });
+  const { data: version } = useQuery({ queryKey: ["version"], queryFn: getVersion });
 
   const { data: hostsResp } = useQuery({
     queryKey: ["hosts"], queryFn: listHosts,
@@ -101,11 +101,6 @@ export function DashboardPage() {
             color={version.environment === "production" ? "success" : "warning"}
           />
         )}
-        <Chip
-          size="small"
-          label={backendDown ? "backend unreachable" : version ? `connected · ${version.version}` : "connecting…"}
-          color={backendDown ? "error" : version ? "success" : "default"}
-        />
       </Stack>
 
       <Grid container spacing={2} sx={{ mb: 1 }}>
