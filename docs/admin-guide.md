@@ -92,8 +92,10 @@ endpoints are under `/api/v1/users`, `/roles`, `/groups`.)
   `POST /users/{id}/unlock` (clears lockout from failed logins).
 - **Reset password:** `POST /users/{id}/reset-password` (set `mustChangePassword`
   to force a change at next login).
-- **Assign roles / groups:** `POST /users/{id}/roles/{roleId}` and
-  `POST /users/{id}/groups/{groupId}` (and the matching `DELETE`s).
+- **Assign roles:** in the UI, **Users → Manage roles** (shield icon) toggles a
+  user's roles; via API `POST/DELETE /users/{id}/roles/{roleId}`.
+- **Group membership:** assign users to groups in the UI from **Groups → Manage
+  members** (people icon), or per user via `POST/DELETE /users/{id}/groups/{groupId}`.
 - **Require MFA (per user):** `POST /users/{id}/require-mfa` `{"require": true}` —
   forces TOTP enrollment at the user's next sign-in before a session is issued.
 - **View accessible hosts:** `GET /users/{id}/hosts` lists every host a user can
@@ -106,7 +108,10 @@ endpoints are under `/api/v1/users`, `/roles`, `/groups`.)
 - **Permissions catalog:** `GET /permissions`.
 - **Groups:** `POST /groups`, `DELETE /groups/{id}`. Group membership is one way
   host access is granted — a user can connect to a host when they share a group
-  with it. Add hosts to groups via `POST /hosts/{id}/groups/{groupId}`.
+  with it. Manage a group's **members** from **Groups → Manage members**; add the
+  group to **hosts** from a host's **Manage access** dialog (or
+  `POST /hosts/{id}/groups/{groupId}`). So: put users in a group, add the group to
+  hosts, and every member can reach every host in it.
 
 ## 6. Manage hosts & access
 

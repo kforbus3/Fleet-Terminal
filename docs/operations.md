@@ -72,6 +72,15 @@ Click the **folder** icon on a host row (or `/files/<hostId>`). Browse directori
 files, and upload (button or drag-and-drop). Every transfer is brokered by the backend and
 recorded in the audit log.
 
+## Dashboard
+
+The home page is an at-a-glance, actionable overview (each panel shown only if you have
+permission for its data): stat cards (hosts + online, active sessions, pending approvals)
+that link to the full page, **quick connect** to your hosts, **recent audit activity**, and
+hosts that **need attention** (offline). A **Live sessions** panel shows, in real time, which
+users are connected to which hosts — the terminal broadcasts session start/end over the
+WebSocket hub, so it updates as people connect and disconnect (needs `Session.Replay`).
+
 ## Live monitoring
 
 The monitor runs authenticated SSH health checks (no ICMP) against enrolled hosts every 30s,
@@ -80,9 +89,9 @@ The dashboard subscribes to a WebSocket and updates in real time.
 
 ## Two-factor authentication (TOTP / passkeys)
 
-1. **Security → Set up authenticator**. Add the shown secret / `otpauth` URL to an authenticator
-   app (the secret is displayed only once), then enter the current 6-digit code to confirm.
-   Passkeys (WebAuthn) can be registered from the same page.
+1. **Security → Set up authenticator**. **Scan the QR code** (generated in the browser, so the
+   secret never leaves the machine) or enter the secret key manually, then enter the current
+   6-digit code to confirm. Passkeys (WebAuthn) can be registered from the same page.
 2. Subsequent sign-ins prompt for the code after the password step.
 3. Remove a factor from the same page. (Admins can reset a locked-out user's factors.)
 

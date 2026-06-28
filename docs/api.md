@@ -355,6 +355,23 @@ grant; super admins bypass).
 Binary frames carry raw terminal input. **Server → client** binary frames carry
 terminal output; a `{"type":"error","data":"…"}` text frame reports failures.
 
+## Live events (WebSocket)
+
+| Method | Path | Auth |
+|--------|------|------|
+| GET (Upgrade) | `/api/v1/events/ws?token=<accessToken>` | authenticated |
+
+A fan-out stream the dashboard subscribes to. Server pushes JSON frames:
+
+```json
+{ "type": "host.status",   "data": { "hostId": "…", "status": "online", "latencyMs": 12 } }
+{ "type": "session.start", "data": { "sshSessionId": "…", "username": "alice", "hostname": "web-01" } }
+{ "type": "session.end",   "data": { "sshSessionId": "…", "username": "alice", "hostname": "web-01" } }
+```
+
+`host.status` is emitted by the monitor; `session.start`/`session.end` by the
+terminal as users connect/disconnect (drives the dashboard's live-sessions panel).
+
 ---
 
 ## Health & metrics summary

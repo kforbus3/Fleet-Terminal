@@ -22,16 +22,36 @@ you log out or your session times out (typically 30 minutes idle).
 - **You already set up an authenticator:** after your password, enter the 6-digit
   code from your app.
 - **You haven't set one up yet and it's required:** you'll be shown a setup screen.
-  Add the displayed **secret key** to an authenticator app (Google Authenticator,
-  1Password, Authy, …), then type the current 6-digit code to finish signing in.
-  After this, 2FA is asked for at every sign-in.
+  **Scan the QR code** with an authenticator app (Google Authenticator, 1Password,
+  Authy, …) — or enter the **secret key** manually — then type the current 6-digit
+  code to finish signing in. After this, 2FA is asked for at every sign-in.
 
 You can also set up or manage 2FA anytime under **Security** (including passkeys,
-if your administrator has them enabled).
+if your administrator has them enabled). The QR code there is generated in your
+browser, so your secret is never sent anywhere.
+
+To **sign out**, use the button at the top-right of the page.
 
 ---
 
-## 2. Connect to a server (Terminal)
+## 2. Your dashboard
+
+The home page gives you an at-a-glance overview:
+
+- **Stat cards** (click to jump to the full page): how many hosts you can reach and
+  how many are online, your active sessions, and any pending approvals.
+- **Quick connect** — your hosts, online first, each one click from a Terminal or
+  Files session.
+- **Live sessions** (if you can review sessions) — a real-time list of who is
+  connected to which host, updating as people connect and disconnect.
+- **Needs attention** — hosts that are currently offline.
+
+You only ever see the data you're allowed to; cards and panels you don't have
+permission for simply don't appear.
+
+---
+
+## 3. Connect to a server (Terminal)
 
 The quickest path is the **Terminals** page:
 
@@ -50,7 +70,7 @@ a host row. To close a session, type `exit` or close the tab.
 
 ---
 
-## 3. Transfer files (SFTP)
+## 4. Transfer files (SFTP)
 
 1. On the **Terminals** or **Hosts** page, click **Files** (folder icon) for a
    server. A file browser opens in a new tab.
@@ -62,7 +82,7 @@ Every transfer is brokered by the server and recorded for audit.
 
 ---
 
-## 4. Request access you don't have (Just-in-Time)
+## 5. Request access you don't have (Just-in-Time)
 
 If you don't see a server you need, you can request temporary access:
 
@@ -84,7 +104,7 @@ time, with a note) or **Deny**.
 
 ---
 
-## 5. Review a recorded session
+## 6. Review a recorded session
 
 If you have replay permission, **Session Replay** lists recorded SSH sessions
 (filter by user or host). Open one to **replay** it as a faithful playback —
@@ -93,7 +113,7 @@ a self-contained file to watch offline.
 
 ---
 
-## 6. Tips & good habits
+## 7. Tips & good habits
 
 - **Show/hide the sidebar** with the menu (☰) button in the top bar — handy on
   wide tables like Hosts.
@@ -108,7 +128,7 @@ a self-contained file to watch offline.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | What to do |
 |---|---|
