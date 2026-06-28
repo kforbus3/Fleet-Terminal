@@ -74,12 +74,33 @@ RBAC is backend-authoritative. The following roles are seeded:
 |------|--------------|
 | **Super Administrator** | `Admin.All` — wildcard, unrestricted |
 | **Administrator** | every permission except the `Admin.All` wildcard |
-| **Operator** | `Host.View`, `Host.Connect`, `Session.Start`, `Session.Replay`, `File.Transfer`, `Approval.Request` |
+| **Operator** | `Host.View`, `Host.Connect`, `Host.Sudo`, `Session.Start`, `Session.Replay`, `File.Transfer`, `Approval.Request` |
 | **Auditor** | `Host.View`, `Audit.View`, `Audit.Export`, `Session.Replay` |
 | **Read-Only** | `Host.View` |
 
 The full permission catalog is in [database.md](./database.md#permissions). You
 can create custom roles and assign any subset of permissions.
+
+### Root vs. login-only access (`Host.Sudo`)
+
+Enrolled hosts have **two shared login accounts**, and a connecting user lands in
+one of them based on the **`Host.Sudo`** permission:
+
+- **With `Host.Sudo`** (or a Super Administrator) → the privileged account
+  (`fleet`) with **passwordless sudo** — full root.
+- **Without `Host.Sudo`** → the **login-only** account (`fleet-login`) — a normal
+  shell with **no sudo**.
+
+This lets you grant a user terminal/SFTP access to a host **without** giving them
+root: assign them a role that has `Host.Connect` but **not** `Host.Sudo` (e.g.
+clone Operator and clear `Host.Sudo`). Either way, every session still uses a
+unique per-user certificate and is fully recorded and audited.
+
+> `Host.Sudo` is granted to **Administrator** and **Operator** by default, so
+> upgrades preserve the previous "connect = root" behavior. The login-only
+> account is created **at enrollment** — hosts enrolled before this feature must
+> be **re-enrolled** (Hosts → Enroll → *Already trusts the Fleet CA*) before
+> login-only users can connect to them.
 
 ## 4. Manage users
 

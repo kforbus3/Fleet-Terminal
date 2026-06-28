@@ -99,6 +99,14 @@ and operational recommendations.
   user→host grant** (`host_users`), or an active **temporary grant** — super
   admins bypass. Enforced on every terminal and SFTP connection
   (`UserCanAccessHost`). Users have no host access by default.
+- **Root vs. login-only on the host** is gated by `Host.Sudo`. Each enrolled host
+  has two shared accounts: a privileged one (`fleet`, NOPASSWD sudo) and a
+  login-only one (`fleet-login`, no sudo). The backend issues a certificate whose
+  principal maps to the privileged account only when the user has `Host.Sudo` (or
+  is a super admin); otherwise it maps to the login-only account. The split is
+  enforced by sshd via `AuthorizedPrincipalsFile` (distinct principals per
+  account), so a login-only certificate cannot open the sudo account. Both tiers
+  still use unique per-user certs and are recorded and audited.
 - Prefer **least privilege**: narrow custom roles plus just-in-time approvals
   over broad standing access.
 

@@ -54,6 +54,12 @@ icon:
 - **Groups** — add the host to a group; any member of that group can reach it.
 - **Individual users** — grant a single user direct access to this host.
 
+Access grants control *whether* a user can reach a host; the **`Host.Sudo`**
+permission (on their role) controls *what they get on it* — root via sudo, or a
+**login-only** shell with no sudo. See the Administrator Guide for the two-account
+model. (Hosts enrolled before this feature need a re-enroll to gain the
+login-only account.)
+
 Review access at a glance: **Manage access** lists a host's groups + direct users, and a
 user's **View accessible hosts** action (Users page) lists every host they can reach. Users
 without standing access can request **Just-in-time** access (below).

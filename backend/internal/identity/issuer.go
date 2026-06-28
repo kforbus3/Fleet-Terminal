@@ -134,11 +134,13 @@ func (i *Issuer) issue(ctx context.Context, sessionID, hostID, userID uuid.UUID,
 // EnsureHostCredential guarantees the session holds a live, unexpired per-host
 // certificate for hostID, minting one if absent or close to expiry. Returns the
 // certificate serial in use. This is called by the gateway just before dialing.
-func (i *Issuer) EnsureHostCredential(ctx context.Context, sessionID, userID, hostID uuid.UUID, username, hostname string) (uint64, error) {
+// principals selects the certificate principals (and thus which host account the
+// cert may log into); nil falls back to the default privileged principals.
+func (i *Issuer) EnsureHostCredential(ctx context.Context, sessionID, userID, hostID uuid.UUID, username, hostname string, principals []string) (uint64, error) {
 	if c, ok := i.vault.GetHost(sessionID, hostID); ok && time.Until(c.ExpiresAt) > i.cfg.CertRenewBefore {
 		return c.Serial, nil
 	}
-	cred, err := i.IssueForHost(ctx, sessionID, userID, hostID, username, hostname, nil)
+	cred, err := i.IssueForHost(ctx, sessionID, userID, hostID, username, hostname, principals)
 	if err != nil {
 		return 0, err
 	}

@@ -567,15 +567,23 @@ echo OK`,
 func (s *Service) caTrustScript(loginUser, caKeys string) string {
 	return fmt.Sprintf(`set -e
 LOGIN=%s
-# Login account that per-user certificates map to (shared account, unique certs).
+NOSUDO="${LOGIN}-login"
+# Two shared accounts that per-user certificates map to (unique cert per user):
+#   $LOGIN  -> privileged, NOPASSWD sudo  (Host.Sudo / super admin)
+#   $NOSUDO -> login-only, NO sudo        (users without Host.Sudo)
 id "$LOGIN" >/dev/null 2>&1 || useradd -m -s /bin/bash "$LOGIN" 2>/dev/null || adduser -D "$LOGIN" 2>/dev/null || true
+id "$NOSUDO" >/dev/null 2>&1 || useradd -m -s /bin/bash "$NOSUDO" 2>/dev/null || adduser -D "$NOSUDO" 2>/dev/null || true
 mkdir -p /etc/sudoers.d && printf '%%s ALL=(ALL) NOPASSWD:ALL\n' "$LOGIN" > /etc/sudoers.d/fleet && chmod 0440 /etc/sudoers.d/fleet
+# $NOSUDO deliberately has no sudoers entry.
 # Trust the Fleet user CA.
 cat > /etc/ssh/fleet_ca.pub <<'CAEOF'
 %s
 CAEOF
 chmod 644 /etc/ssh/fleet_ca.pub
+# Principal mapping: privileged cert principal "fleet" -> $LOGIN account;
+# login-only cert principal "fleet-login" -> $NOSUDO account.
 mkdir -p /etc/ssh/auth_principals && printf 'fleet\n' > /etc/ssh/auth_principals/"$LOGIN"
+printf 'fleet-login\n' > /etc/ssh/auth_principals/"$NOSUDO"
 # sshd: prefer a drop-in; also append directly if the main config has no Include.
 mkdir -p /etc/ssh/sshd_config.d
 cat > /etc/ssh/sshd_config.d/00-fleet.conf <<'SSHEOF'

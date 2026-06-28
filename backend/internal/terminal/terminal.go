@@ -119,11 +119,15 @@ func (h *handler) run(ctx context.Context, ws *websocket.Conn, p *auth.Principal
 		_ = ws.WriteMessage(websocket.TextMessage, mustJSON(controlMsg{Type: "error", Data: msg}))
 	}
 
+	// Privilege tier: Host.Sudo (or super admin) lands in the privileged sudo
+	// account; everyone else in the host's login-only account.
+	loginUser, principals := sshgw.LoginTier(p.IsSuperAdmin || p.Has("Host.Sudo"), host.SSHUser, p.Username)
+
 	var gwConn *sshgw.Conn
 	var err error
 	for _, addr := range candidates {
 		// Use a certificate unique to this (user, host) pair.
-		gwConn, err = h.gw.DialForHost(ctx, p.SessionID, p.UserID, host.ID, p.Username, host.Hostname, addr, host.SSHPort, host.SSHUser)
+		gwConn, err = h.gw.DialForHost(ctx, p.SessionID, p.UserID, host.ID, p.Username, host.Hostname, addr, host.SSHPort, loginUser, principals)
 		if err == nil {
 			break
 		}

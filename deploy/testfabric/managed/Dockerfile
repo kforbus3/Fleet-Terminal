@@ -33,14 +33,18 @@ RUN if command -v apt-get >/dev/null 2>&1; then \
 
 COPY --from=wgbuild /src/wireguard-go /usr/local/bin/wireguard-go
 
-# Login user with passwordless sudo; fleet CA-signed certs map to it.
+# Two login accounts (matching enrollment): 'fleet' has passwordless sudo;
+# 'fleet-login' is login-only (no sudo). Fleet CA-signed certs map to each by
+# principal (fleet / fleet-login).
 RUN useradd -m -s /bin/bash fleet \
+ && useradd -m -s /bin/bash fleet-login \
  && echo 'fleet ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/fleet \
  && chmod 0440 /etc/sudoers.d/fleet
 
 # sshd privilege-separation dir, principals mapping, and fleet CA placeholder.
 RUN mkdir -p /run/sshd /etc/ssh/auth_principals \
  && printf 'fleet\n' > /etc/ssh/auth_principals/fleet \
+ && printf 'fleet-login\n' > /etc/ssh/auth_principals/fleet-login \
  && printf '# Placeholder for the Fleet Terminal user CA public key.\n# The enrollment flow overwrites this file with the real CA key.\n' \
       > /etc/ssh/fleet_ca.pub
 

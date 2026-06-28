@@ -107,11 +107,16 @@ func (g *Gateway) dialWithCred(ctx context.Context, cred *identity.Credential, h
 // (session, host) pair, minting it if necessary. Unlike Dial (which uses the
 // session-level identity for the jump host / enrollment), every managed-host
 // connection authenticates with its own distinct key and certificate serial.
-func (g *Gateway) DialForHost(ctx context.Context, sessionID, userID, hostID uuid.UUID, username, hostname, host string, port int, user string) (*Conn, error) {
+//
+// user is the host account to log into and principals are the certificate
+// principals (which the host maps to that account); pass both from LoginTier so
+// the privileged vs login-only tier is consistent. nil principals fall back to
+// the issuer's default privileged principals.
+func (g *Gateway) DialForHost(ctx context.Context, sessionID, userID, hostID uuid.UUID, username, hostname, host string, port int, user string, principals []string) (*Conn, error) {
 	if g.issuer == nil {
 		return nil, fmt.Errorf("gateway issuer unavailable")
 	}
-	if _, err := g.issuer.EnsureHostCredential(ctx, sessionID, userID, hostID, username, hostname); err != nil {
+	if _, err := g.issuer.EnsureHostCredential(ctx, sessionID, userID, hostID, username, hostname, principals); err != nil {
 		return nil, fmt.Errorf("issue per-host credential: %w", err)
 	}
 	cred, ok := g.vault.GetHost(sessionID, hostID)
@@ -119,6 +124,20 @@ func (g *Gateway) DialForHost(ctx context.Context, sessionID, userID, hostID uui
 		return nil, fmt.Errorf("no per-host credential for session")
 	}
 	return g.dialWithCred(ctx, cred, host, port, user)
+}
+
+// LoginTier maps a connection's privilege to the host account it lands in and
+// the certificate principals that authorize it. Enrollment provisions two
+// accounts per host: the privileged shared account (sshUser, NOPASSWD sudo,
+// principal "fleet") and a login-only account (sshUser+"-login", no sudo,
+// principal "fleet-login"). sudo callers get the former; everyone else the
+// latter. The username is added as an informational principal (it matches no
+// AuthorizedPrincipalsFile entry, so it grants no access on its own).
+func LoginTier(sudo bool, sshUser, username string) (loginUser string, principals []string) {
+	if sudo {
+		return sshUser, nil // nil -> issuer default principals {"fleet", username}
+	}
+	return sshUser + "-login", []string{"fleet-login", username}
 }
 
 // HostCredentialSerial returns the serial of the per-host certificate bound to a
