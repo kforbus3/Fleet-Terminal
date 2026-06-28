@@ -296,9 +296,22 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
 	// written and visible to a subsequent directory listing. Closing after the
 	// response (a deferred Close) raced the client's post-upload refetch, which
 	// is why an uploaded file only appeared after a manual page refresh.
-	if err := dst.Close(); err != nil {
-		uploadFailed(http.StatusBadGateway, "finalize upload: "+err.Error())
-		return
+	//
+	// The data is already written by io.Copy, so bound the Close: a slow or
+	// unresponsive SFTP server must not hang the upload request forever. If it
+	// doesn't finish in time we respond anyway (the bytes are on disk) and the
+	// deferred cleanup releases the handle when the connection closes.
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- dst.Close() }()
+	select {
+	case err := <-closeErr:
+		if err != nil {
+			uploadFailed(http.StatusBadGateway, "finalize upload: "+err.Error())
+			return
+		}
+	case <-time.After(15 * time.Second):
+		h.d.Log.Warn("sftp upload: remote file close slow; responding anyway",
+			"host", host.Hostname, "remote", remote, "bytes", n)
 	}
 	h.finishTransfer(r, rec, n)
 	h.audit(r, p, "sftp.upload", host.ID, remote, n)
