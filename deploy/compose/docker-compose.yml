@@ -51,8 +51,44 @@ services:
       FLEET_COOKIE_SECURE: ${FLEET_COOKIE_SECURE:-false}
       FLEET_JUMP_HOST: ${FLEET_JUMP_HOST:-jumphost:22}
       FLEET_JUMP_USER: ${FLEET_JUMP_USER:-fleet}
+      FLEET_JUMP_KNOWN_HOSTS: ${FLEET_JUMP_KNOWN_HOSTS:-}
       FLEET_RECORDING_DIR: /var/lib/fleet/recordings
       FLEET_MAX_UPLOAD_BYTES: ${FLEET_MAX_UPLOAD_BYTES:-5368709120}
+      # WireGuard overlay — managed-host enrollment uses these. Empty falls back
+      # to the binary's defaults (see .env.example). FLEET_WG_JUMP_ENDPOINT MUST
+      # be set to a public/LAN address managed hosts can dial; FLEET_WG_INTERFACE
+      # lets you avoid colliding with an existing wg0 on managed hosts.
+      FLEET_WG_INTERFACE: ${FLEET_WG_INTERFACE:-}
+      FLEET_WG_SUBNET: ${FLEET_WG_SUBNET:-}
+      FLEET_WG_JUMP_IP: ${FLEET_WG_JUMP_IP:-}
+      FLEET_WG_JUMP_ENDPOINT: ${FLEET_WG_JUMP_ENDPOINT:-}
+      FLEET_WG_PORT: ${FLEET_WG_PORT:-}
+      # Sessions, tokens, certificate lifetimes.
+      FLEET_ACCESS_TOKEN_TTL: ${FLEET_ACCESS_TOKEN_TTL:-}
+      FLEET_REFRESH_TOKEN_TTL: ${FLEET_REFRESH_TOKEN_TTL:-}
+      FLEET_SESSION_IDLE_TTL: ${FLEET_SESSION_IDLE_TTL:-}
+      FLEET_SESSION_ABSOLUTE_TTL: ${FLEET_SESSION_ABSOLUTE_TTL:-}
+      FLEET_USER_CERT_TTL: ${FLEET_USER_CERT_TTL:-}
+      FLEET_CERT_RENEW_BEFORE: ${FLEET_CERT_RENEW_BEFORE:-}
+      FLEET_HOST_CERT_TTL: ${FLEET_HOST_CERT_TTL:-}
+      FLEET_COOKIE_DOMAIN: ${FLEET_COOKIE_DOMAIN:-}
+      # Per-IP rate limiting.
+      FLEET_RATE_LIMIT_PER_MIN: ${FLEET_RATE_LIMIT_PER_MIN:-}
+      FLEET_RATE_LIMIT_BURST: ${FLEET_RATE_LIMIT_BURST:-}
+      FLEET_AUTH_RATE_LIMIT_PER_MIN: ${FLEET_AUTH_RATE_LIMIT_PER_MIN:-}
+      FLEET_AUTH_RATE_LIMIT_BURST: ${FLEET_AUTH_RATE_LIMIT_BURST:-}
+      # Bootstrap, MFA/WebAuthn (RPID/origins derive from PUBLIC_URL if empty).
+      FLEET_ALLOW_BOOTSTRAP: ${FLEET_ALLOW_BOOTSTRAP:-}
+      FLEET_WEBAUTHN_RPID: ${FLEET_WEBAUTHN_RPID:-}
+      FLEET_WEBAUTHN_RP_NAME: ${FLEET_WEBAUTHN_RP_NAME:-}
+      FLEET_WEBAUTHN_ORIGINS: ${FLEET_WEBAUTHN_ORIGINS:-}
+      # Observability / DB pool.
+      FLEET_LOG_LEVEL: ${FLEET_LOG_LEVEL:-}
+      FLEET_LOG_FORMAT: ${FLEET_LOG_FORMAT:-}
+      FLEET_TRACING: ${FLEET_TRACING:-}
+      FLEET_OTLP_ENDPOINT: ${FLEET_OTLP_ENDPOINT:-}
+      FLEET_DB_MAX_CONNS: ${FLEET_DB_MAX_CONNS:-}
+      FLEET_DB_MIN_CONNS: ${FLEET_DB_MIN_CONNS:-}
     volumes:
       - recordings:/var/lib/fleet/recordings
     depends_on:
