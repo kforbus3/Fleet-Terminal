@@ -242,6 +242,10 @@ if ! ls "$C"/ssg-*-ds.xml >/dev/null 2>&1; then
   elif command -v yum >/dev/null 2>&1; then sudo yum install -y scap-security-guide >/dev/null 2>&1;
   elif command -v zypper >/dev/null 2>&1; then sudo zypper --non-interactive install scap-security-guide >/dev/null 2>&1; fi
 fi
+# Debian/Ubuntu lack oscap's global CPE dictionary; provide an empty valid one
+# (real platform detection comes from the SSG datastream). Guarded for distros
+# that already ship it.
+if command -v oscap >/dev/null 2>&1 && [ ! -f /usr/share/openscap/cpe/openscap-cpe-dict.xml ]; then sudo mkdir -p /usr/share/openscap/cpe 2>/dev/null; printf '<?xml version="1.0" encoding="UTF-8"?>\n<cpe-list xmlns="http://cpe.mitre.org/dictionary/2.0"/>\n' | sudo tee /usr/share/openscap/cpe/openscap-cpe-dict.xml >/dev/null 2>&1; fi
 echo done`
 
 // scanScript installs oscap + SCAP content if missing, resolves the host's
@@ -262,6 +266,11 @@ if ! ls "$C"/ssg-*-ds.xml >/dev/null 2>&1; then
   elif command -v zypper >/dev/null 2>&1; then sudo zypper --non-interactive install scap-security-guide >/dev/null 2>&1; fi
 fi
 command -v oscap >/dev/null 2>&1 || { echo "STATUS=scanner_unavailable"; exit 0; }
+# Debian/Ubuntu don't ship oscap's global CPE dictionary; without it oscap can't
+# confirm the platform (every rule -> notapplicable) and aborts (SIGABRT) at the
+# end. An empty valid dict is enough — real platform detection comes from the SSG
+# datastream. Guarded so distros that ship it (RHEL etc.) are untouched.
+if [ ! -f /usr/share/openscap/cpe/openscap-cpe-dict.xml ]; then sudo mkdir -p /usr/share/openscap/cpe 2>/dev/null; printf '<?xml version="1.0" encoding="UTF-8"?>\n<cpe-list xmlns="http://cpe.mitre.org/dictionary/2.0"/>\n' | sudo tee /usr/share/openscap/cpe/openscap-cpe-dict.xml >/dev/null 2>&1; fi
 ID=$(. /etc/os-release 2>/dev/null; echo "$ID"); VER=$(. /etc/os-release 2>/dev/null; echo "$VERSION_ID" | tr -d .)
 DS=""
 for c in "$C/ssg-${ID}${VER}-ds.xml" "$C/ssg-${ID}-ds.xml"; do [ -f "$c" ] && DS="$c" && break; done
