@@ -80,8 +80,11 @@ curl -fsSL -H "Authorization: Bearer $TOKEN" \
 
 Each method streams its step log and shows the assigned overlay address.
 Enrollment installs `/etc/ssh/fleet_ca.pub`, `TrustedUserCAKeys`, the
-`AuthorizedPrincipalsFile` mapping (principal `fleet`), and the login account — so
-you never add per-user keys to `authorized_keys`. For the fully manual path,
+`AuthorizedPrincipalsFile` mapping, and **two login accounts** — the privileged
+`fleet` account (principal `fleet`, NOPASSWD sudo) and a login-only
+`fleet-login` account (principal `fleet-login`, no sudo); the requester's
+`Host.Sudo` permission selects which one their certificate maps to. So you never
+add per-user keys to `authorized_keys`. For the fully manual path,
 fetch the CA with `GET /api/v1/certificates/ca`, configure `sshd_config`
 yourself, then enroll with the **Trusted** method.
 

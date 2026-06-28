@@ -38,7 +38,7 @@ Browser ──HTTPS/WS──> React SPA ──REST/WS──> Go Backend ──SS
 |------|-----------|
 | Access | Browser SSH terminal (xterm.js), multi-tab, full PTY, session recording & replay; **real-time dashboard** (quick-connect, live "who's connected to which host") |
 | Identity | Self-contained auth, Argon2id, MFA (TOTP + WebAuthn passkeys) — optional or **enforced** globally/per-user, first-run bootstrap wizard |
-| AuthZ | RBAC (built-in + custom roles), host groups **and direct user→host grants**, just-in-time temporary access with auto-expiry |
+| AuthZ | RBAC (built-in + custom roles), host groups **and direct user→host grants**, **root vs login-only host access** (`Host.Sudo`), just-in-time temporary access with auto-expiry |
 | Hosts | Inventory + **quick-connect Terminals launcher**, live SSH health monitoring, automated enrollment (password / private key / **SSH agent** / **no-install ssh-pipe**) |
 | CA | **Unique ephemeral cert per (user, host)**, CA rotation, revocation, lifecycle API |
 | Hardening | Per-IP rate limiting, idle/absolute session reaper, live-session termination, internet-exposure guide |

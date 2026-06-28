@@ -10,6 +10,11 @@ automatically on startup when `FLEET_MIGRATE_ON_START=true` (the default).
 | `0001_init.sql` | Core schema (all tables below) |
 | `0002_seed_rbac.sql` | Permission catalog, built-in roles, default settings |
 | `0003_cert_serial.sql` | `ssh_cert_serial_seq` monotonic certificate serial sequence |
+| `0004_host_address_text.sql` | Host management address stored as text |
+| `0005_host_users.sql` | Direct user→host access grants (`host_users`) |
+| `0006_require_mfa.sql` | `require_mfa` system setting |
+| `0007_host_sudo.sql` | `Host.Sudo` permission (root vs login-only host access) |
+| `0008_branding.sql` | `branding` system setting (customizable app name) |
 
 **Extensions:** `pgcrypto` (`gen_random_uuid()`), `citext` (case-insensitive
 usernames/emails).
@@ -116,7 +121,7 @@ Seeded built-in roles: **Super Administrator**, **Administrator**, **Operator**,
 | `key` | TEXT PK | e.g. `Host.Connect` |
 | `description` | TEXT | |
 
-Seeded keys: `Host.View`, `Host.Connect`, `Host.Enroll`, `Host.Edit`,
+Seeded keys: `Host.View`, `Host.Connect`, `Host.Sudo`, `Host.Enroll`, `Host.Edit`,
 `Host.Delete`, `Host.RotateCertificate`, `Session.Start`, `Session.Terminate`,
 `Session.Replay`, `File.Transfer`, `Audit.View`, `Audit.Export`, `User.Create`,
 `User.Edit`, `User.Delete`, `User.ResetPassword`, `Group.Create`, `Group.Edit`,
@@ -412,7 +417,8 @@ Key/value system settings.
 | `value` | JSONB | |
 | `updated_at` | TIMESTAMPTZ | |
 
-Seeded keys: `password_policy`, `lockout_policy`, `session_policy`.
+Seeded keys: `password_policy`, `lockout_policy`, `session_policy`, `require_mfa`,
+`branding`.
 
 ---
 

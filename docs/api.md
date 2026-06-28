@@ -34,7 +34,7 @@ the root.
 |--------|------|-------------|
 | GET | `/health` | Liveness. `{"status":"ok"}` |
 | GET | `/ready` | Readiness; pings the DB. `200 {"status":"ready"}` or `503 {"status":"db_unavailable"}` |
-| GET | `/version` | `{"version":"<build version>"}` |
+| GET | `/version` | `{"version":"<build>","environment":"production","appName":"Fleet Terminal"}` |
 | GET | `/metrics` | Prometheus metrics (text exposition format) |
 | GET | `/api/v1/ping` | `{"pong":"ok"}` |
 
@@ -389,6 +389,7 @@ terminal as users connect/disconnect (drives the dashboard's live-sessions panel
 
 - `GET /health` — process liveness.
 - `GET /ready` — DB-backed readiness (used by orchestrators).
-- `GET /version` — build version string.
+- `GET /version` — build version string, runtime environment (`FLEET_ENV`), and the
+  customizable application name (public, so the login screen can render it).
 - `GET /metrics` — Prometheus counters/histograms (`fleet_http_requests_total`,
   `fleet_http_request_duration_seconds`, plus session/gateway metrics).
