@@ -160,6 +160,37 @@ func (s *Store) SearchHosts(ctx context.Context, q string, limit int) ([]models.
 	return out, rows.Err()
 }
 
+// AccessibleHostIDs returns the set of host IDs a user can already reach — via
+// group, direct grant, or active temporary grant (all hosts for super admins).
+// IDs only (no detail fan-out), so it's cheap enough to call on every keystroke
+// when filtering pickers.
+func (s *Store) AccessibleHostIDs(ctx context.Context, userID uuid.UUID, isSuperAdmin bool) (map[uuid.UUID]bool, error) {
+	query := `SELECT id FROM hosts`
+	args := []any{}
+	if !isSuperAdmin {
+		query = `
+			SELECT hg.host_id FROM user_groups ug JOIN host_groups hg ON hg.group_id=ug.group_id WHERE ug.user_id=$1
+			UNION SELECT host_id FROM host_users WHERE user_id=$1
+			UNION SELECT host_id FROM temporary_permissions WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>now() AND host_id IS NOT NULL
+			UNION SELECT hg.host_id FROM temporary_permissions tp JOIN host_groups hg ON hg.group_id=tp.group_id WHERE tp.user_id=$1 AND tp.revoked_at IS NULL AND tp.expires_at>now()`
+		args = []any{userID}
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := map[uuid.UUID]bool{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		set[id] = true
+	}
+	return set, rows.Err()
+}
+
 // ListAccessibleHosts returns hosts a user may access (group or temp grant), or
 // all hosts for super admins.
 func (s *Store) ListAccessibleHosts(ctx context.Context, userID uuid.UUID, isSuperAdmin bool) ([]models.Host, error) {

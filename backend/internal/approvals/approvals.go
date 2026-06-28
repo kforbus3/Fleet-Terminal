@@ -101,10 +101,14 @@ type requestTarget struct {
 
 // targets serves the access-request name picker: a server-side search over hosts
 // or groups (?kind=host|group&q=...), capped server-side so it scales to large
-// fleets. It returns all name matches — including targets the requester can
-// already reach (a super admin reaches every host, and members reach their own
-// groups, so excluding them would empty the picker for exactly those users).
+// fleets. Targets the requester can already reach are excluded — there is
+// nothing to request for those. (A super admin reaches everything, so their
+// picker is intentionally empty; requests come from users who lack access.)
+//
+// We over-fetch from the search and stop once `limit` un-reached targets are
+// collected, so excluding a user's accessible matches doesn't shrink the list.
 func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
+	p := auth.MustPrincipal(r)
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
 	const limit = 50
@@ -112,22 +116,44 @@ func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
 	out := make([]requestTarget, 0, limit)
 	switch r.URL.Query().Get("kind") {
 	case "", "host":
-		hosts, err := h.d.Store.SearchHosts(ctx, q, limit)
+		hosts, err := h.d.Store.SearchHosts(ctx, q, limit*2)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not search hosts")
 			return
 		}
+		have, err := h.d.Store.AccessibleHostIDs(ctx, p.UserID, p.IsSuperAdmin)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load access")
+			return
+		}
 		for _, hh := range hosts {
+			if have[hh.ID] {
+				continue
+			}
 			out = append(out, requestTarget{ID: hh.ID.String(), Name: hh.Hostname, Environment: hh.Environment})
+			if len(out) >= limit {
+				break
+			}
 		}
 	case "group":
-		groups, err := h.d.Store.SearchGroups(ctx, q, limit)
+		groups, err := h.d.Store.SearchGroups(ctx, q, limit*2)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not search groups")
 			return
 		}
+		have, err := h.d.Store.AccessibleGroupIDs(ctx, p.UserID, p.IsSuperAdmin)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load access")
+			return
+		}
 		for _, g := range groups {
+			if have[g.ID] {
+				continue
+			}
 			out = append(out, requestTarget{ID: g.ID.String(), Name: g.Name})
+			if len(out) >= limit {
+				break
+			}
 		}
 	default:
 		writeError(w, http.StatusBadRequest, "kind must be host or group")

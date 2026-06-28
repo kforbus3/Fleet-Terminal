@@ -41,6 +41,33 @@ func (s *Store) SearchGroups(ctx context.Context, q string, limit int) ([]models
 	return out, rows.Err()
 }
 
+// AccessibleGroupIDs returns the set of group IDs a user already has access to —
+// direct membership or an active temporary grant (all groups for super admins).
+func (s *Store) AccessibleGroupIDs(ctx context.Context, userID uuid.UUID, isSuperAdmin bool) (map[uuid.UUID]bool, error) {
+	query := `SELECT id FROM groups`
+	args := []any{}
+	if !isSuperAdmin {
+		query = `
+			SELECT group_id FROM user_groups WHERE user_id=$1
+			UNION SELECT group_id FROM temporary_permissions WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>now() AND group_id IS NOT NULL`
+		args = []any{userID}
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := map[uuid.UUID]bool{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		set[id] = true
+	}
+	return set, rows.Err()
+}
+
 // ListGroups returns all groups.
 func (s *Store) ListGroups(ctx context.Context) ([]models.Group, error) {
 	rows, err := s.pool.Query(ctx,

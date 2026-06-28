@@ -289,8 +289,10 @@ Read-only access to recorded SSH sessions and their `asciicast-v2` recordings.
 
 **`GET /approvals/targets?kind=host|group&q=<text>`** → server-side search for
 the access-request picker. Matches hosts (or groups) by name, case-insensitive
-substring, capped at 50 results so it scales to large fleets. `kind` defaults to
-`host`; `q` empty returns the first matches.
+substring, capped at 50 results so it scales to large fleets. Targets the
+requester can already reach (membership, direct/temporary grant, or super admin)
+are excluded — so a super admin's picker is empty. `kind` defaults to `host`;
+`q` empty returns the first matches.
 ```json
 { "targets": [ { "id": "…", "name": "web-01", "environment": "prod" } ] }
 ```
