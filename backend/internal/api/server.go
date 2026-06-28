@@ -41,6 +41,7 @@ import (
 	"github.com/fleet-terminal/backend/internal/ratelimit"
 	"github.com/fleet-terminal/backend/internal/metrics"
 	"github.com/fleet-terminal/backend/internal/monitor"
+	"github.com/fleet-terminal/backend/internal/scan"
 	"github.com/fleet-terminal/backend/internal/sessionsapi"
 	fleetsftp "github.com/fleet-terminal/backend/internal/sftp"
 	"github.com/fleet-terminal/backend/internal/sshgw"
@@ -402,6 +403,9 @@ func (s *Server) registerRoutes(r chi.Router) {
 
 	// M9 — audited SFTP file transfer.
 	fleetsftp.Mount(r, deps, s.Gateway)
+
+	// OpenSCAP security/compliance scans (over the gateway, privileged signer).
+	scan.Mount(r, deps, scan.New(s.Store, s.Cfg, s.Log, s.Gateway, s.Issuer))
 
 	// Orchestrated modules (admin, audit, sessions, approvals).
 	admin.Mount(r, deps)

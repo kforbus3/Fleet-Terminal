@@ -16,7 +16,8 @@ import FolderIcon from "@mui/icons-material/Folder";
 import LockPersonIcon from "@mui/icons-material/LockPerson";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import { Alert, CircularProgress, List, ListItem, ListItemText } from "@mui/material";
+import HealthAndSafetyIcon from "@mui/icons-material/HealthAndSafety";
+import { Alert, CircularProgress, List, ListItem, ListItemText, Paper } from "@mui/material";
 import { MenuItem, ListItemSecondaryAction, Divider } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -25,6 +26,9 @@ import {
   type EnrollmentResult, type EnrollParams, type Host, type HostInput,
 } from "../api/hosts";
 import { listGroups, listUsers } from "../api/admin";
+import {
+  listScanProfiles, listHostScans, startScan, scanReportUrl, type HostScan,
+} from "../api/scans";
 import { useAuthStore } from "../store/auth";
 import {
   Checkbox, FormControl, FormControlLabel, FormLabel, Radio, RadioGroup,
@@ -193,6 +197,7 @@ export function HostsPage() {
   const [enrollTarget, setEnrollTarget] = useState<Host | null>(null);
   const [accessTarget, setAccessTarget] = useState<Host | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<Host | null>(null);
+  const [scanTarget, setScanTarget] = useState<Host | null>(null);
 
   const createMut = useMutation({
     mutationFn: createHost,
@@ -301,12 +306,17 @@ export function HostsPage() {
       valueFormatter: (value) => fmtDate(value ? String(value) : undefined),
     },
     {
-      field: "actions", headerName: "Actions", width: 260, sortable: false, filterable: false,
+      field: "actions", headerName: "Actions", width: 290, sortable: false, filterable: false,
       renderCell: (params) => (
         <Stack direction="row" spacing={0.5}>
           <Tooltip title="Host details">
             <IconButton size="small" onClick={() => setDetailsTarget(params.row)}>
               <InfoOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Security scan (OpenSCAP)">
+            <IconButton size="small" onClick={() => setScanTarget(params.row)}>
+              <HealthAndSafetyIcon fontSize="small" />
             </IconButton>
           </Tooltip>
           <Tooltip title="Open terminal in a new tab">
@@ -423,7 +433,151 @@ export function HostsPage() {
       <HostAccessDialog key={accessTarget?.id ?? "access-none"} host={accessTarget} onClose={() => setAccessTarget(null)} />
 
       <HostDetailsDialog key={detailsTarget?.id ?? "details-none"} host={detailsTarget} onClose={() => setDetailsTarget(null)} />
+
+      <HostScanDialog key={scanTarget?.id ?? "scan-none"} host={scanTarget} onClose={() => setScanTarget(null)} />
     </Box>
+  );
+}
+
+function scanColor(s: string): "default" | "success" | "error" | "warning" | "info" {
+  if (s === "completed") return "success";
+  if (s === "failed") return "error";
+  if (s === "running") return "info";
+  return "warning";
+}
+
+// HostScanDialog runs OpenSCAP scans and lists their reports. Profiles are
+// discovered from the host on open; scans run in the background (the list polls
+// while any is active). Reports are viewed in a sandboxed iframe or downloaded.
+function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const hostId = host?.id ?? "";
+  const token = useAuthStore((s) => s.accessToken) ?? "";
+  const [profile, setProfile] = useState("");
+  const [reportId, setReportId] = useState<string | null>(null);
+
+  const { data: prof, isLoading: profLoading } = useQuery({
+    queryKey: ["scan-profiles", hostId],
+    queryFn: () => listScanProfiles(hostId),
+    enabled: Boolean(host),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const { data: scans = [] } = useQuery({
+    queryKey: ["host-scans", hostId],
+    queryFn: () => listHostScans(hostId),
+    enabled: Boolean(host),
+    refetchInterval: (q) => {
+      const list = q.state.data as HostScan[] | undefined;
+      return list?.some((s) => s.status === "pending" || s.status === "running") ? 4000 : false;
+    },
+  });
+
+  const runMut = useMutation({
+    mutationFn: () => startScan(hostId, profile),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["host-scans", hostId] }),
+  });
+
+  return (
+    <>
+      <Dialog open={Boolean(host)} onClose={onClose} fullWidth maxWidth="md">
+        <DialogTitle>Security scan · {host?.hostname}</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Runs an OpenSCAP compliance scan over SSH and stores an HTML report. The scanner is
+            installed automatically if missing, so the first scan on a host can take several minutes.
+          </Typography>
+          <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 1 }}>
+            <TextField
+              select size="small" label="Profile" value={profile}
+              onChange={(e) => setProfile(e.target.value)} sx={{ flexGrow: 1 }}
+              helperText={
+                profLoading ? "Loading profiles from host…"
+                  : prof && !prof.installed ? "Scanner not installed yet — it'll be set up on the first scan (default profile)."
+                  : undefined
+              }
+            >
+              <MenuItem value="">Standard (default)</MenuItem>
+              {prof?.profiles.map((p) => (
+                <MenuItem key={p.id} value={p.id}>{p.title || p.id}</MenuItem>
+              ))}
+            </TextField>
+            <Button variant="contained" sx={{ mt: 0.5 }} disabled={!host || runMut.isPending} onClick={() => runMut.mutate()}>
+              {runMut.isPending ? "Starting…" : "Run scan"}
+            </Button>
+          </Stack>
+          {runMut.isError && <Alert severity="error" sx={{ mb: 2 }}>Could not start the scan.</Alert>}
+
+          <Typography variant="overline" color="text.secondary">History</Typography>
+          <Stack spacing={1} sx={{ mt: 0.5 }}>
+            {scans.map((s) => <ScanRow key={s.id} scan={s} token={token} onView={() => setReportId(s.id)} />)}
+            {scans.length === 0 && <Typography variant="body2" color="text.secondary">No scans yet.</Typography>}
+          </Stack>
+        </DialogContent>
+        <DialogActions><Button onClick={onClose}>Close</Button></DialogActions>
+      </Dialog>
+      <ScanReportViewer scanId={reportId} token={token} onClose={() => setReportId(null)} />
+    </>
+  );
+}
+
+function ScanRow({ scan, token, onView }: { scan: HostScan; token: string; onView: () => void }) {
+  const active = scan.status === "pending" || scan.status === "running";
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5 }}>
+      <Stack direction="row" alignItems="center" spacing={1.5}>
+        <Chip size="small" label={scan.status} color={scanColor(scan.status)} />
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography variant="body2" noWrap>{scan.profileTitle || scan.profile || "Standard profile"}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {fmtDate(scan.createdAt)}{scan.requester ? ` · ${scan.requester}` : ""}
+          </Typography>
+        </Box>
+        {active && <CircularProgress size={18} />}
+        {scan.status === "failed" && (
+          <Tooltip title={scan.error || "failed"}>
+            <Typography variant="caption" color="error" sx={{ maxWidth: 200 }} noWrap>{scan.error || "failed"}</Typography>
+          </Tooltip>
+        )}
+        {scan.status === "completed" && (
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <Box sx={{ textAlign: "right" }}>
+              <Typography variant="body2">{scan.score != null ? `${Math.round(scan.score)}%` : "—"}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                <span style={{ color: "#2e7d32" }}>{scan.passCount} pass</span>
+                {" · "}
+                <span style={{ color: "#c62828" }}>{scan.failCount} fail</span>
+              </Typography>
+            </Box>
+            <Button size="small" onClick={onView}>View</Button>
+            <Button size="small" component="a" href={scanReportUrl(scan.id, token, true)}>Download</Button>
+          </Stack>
+        )}
+      </Stack>
+    </Paper>
+  );
+}
+
+function ScanReportViewer({ scanId, token, onClose }: { scanId: string | null; token: string; onClose: () => void }) {
+  return (
+    <Dialog open={Boolean(scanId)} onClose={onClose} fullWidth maxWidth="lg" PaperProps={{ sx: { height: "90vh" } }}>
+      <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <span style={{ flexGrow: 1 }}>Scan report</span>
+        {scanId && <Button size="small" component="a" href={scanReportUrl(scanId, token, true)}>Download</Button>}
+        <Button size="small" onClick={onClose}>Close</Button>
+      </DialogTitle>
+      <DialogContent sx={{ p: 0 }}>
+        {scanId && (
+          <iframe
+            title="OpenSCAP report"
+            src={scanReportUrl(scanId, token)}
+            sandbox="allow-scripts"
+            style={{ width: "100%", height: "100%", border: "none" }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

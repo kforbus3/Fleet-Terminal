@@ -1,0 +1,186 @@
+package scan
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/fleet-terminal/backend/internal/app"
+	"github.com/fleet-terminal/backend/internal/auth"
+	"github.com/fleet-terminal/backend/internal/models"
+)
+
+// Mount attaches scan routes. JSON routes use cookie auth + Host.Scan; the report
+// route authenticates via a token query param so it can be rendered in a
+// sandboxed <iframe> or downloaded directly by the browser.
+func Mount(r chi.Router, d *app.Deps, svc *Service) {
+	h := &handler{d: d, svc: svc}
+	r.Group(func(pr chi.Router) {
+		pr.Use(d.Auth.RequireAuth)
+		pr.With(d.Auth.RequirePermission("Host.Scan")).Get("/hosts/{id}/scan/profiles", h.profiles)
+		pr.With(d.Auth.RequirePermission("Host.Scan")).Post("/hosts/{id}/scan", h.start)
+		pr.With(d.Auth.RequirePermission("Host.Scan")).Get("/hosts/{id}/scans", h.list)
+		pr.With(d.Auth.RequirePermission("Host.Scan")).Get("/scans/{id}", h.get)
+	})
+	r.Get("/scans/{id}/report", h.report)
+}
+
+type handler struct {
+	d   *app.Deps
+	svc *Service
+}
+
+func (h *handler) hostFromURL(w http.ResponseWriter, r *http.Request) (*models.Host, bool) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad host id")
+		return nil, false
+	}
+	host, err := h.d.Store.GetHost(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "host not found")
+		return nil, false
+	}
+	return host, true
+}
+
+// profiles discovers the SCAP profiles available on the host (no install).
+func (h *handler) profiles(w http.ResponseWriter, r *http.Request) {
+	host, ok := h.hostFromURL(w, r)
+	if !ok {
+		return
+	}
+	installed, datastream, profiles, err := h.svc.DiscoverProfiles(r.Context(), host)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "discover profiles: "+err.Error())
+		return
+	}
+	if profiles == nil {
+		profiles = []models.ScanProfile{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"installed": installed, "datastream": datastream, "profiles": profiles,
+	})
+}
+
+type startReq struct {
+	Profile string `json:"profile"`
+}
+
+// start creates a scan record and kicks off the scan in the background.
+func (h *handler) start(w http.ResponseWriter, r *http.Request) {
+	host, ok := h.hostFromURL(w, r)
+	if !ok {
+		return
+	}
+	var rq startReq
+	_ = json.NewDecoder(r.Body).Decode(&rq) // body optional; empty profile -> standard
+	p := auth.MustPrincipal(r)
+
+	rec, err := h.d.Store.CreateHostScan(r.Context(), host.ID, &p.UserID, p.Username, rq.Profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create scan")
+		return
+	}
+	go h.svc.Run(rec.ID, host, rq.Profile)
+
+	h.audit(r, "host.scan", rec.ID.String(), map[string]any{
+		"hostId": host.ID, "hostname": host.Hostname, "profile": rq.Profile,
+	})
+	writeJSON(w, http.StatusAccepted, rec)
+}
+
+// list returns recent scans for a host.
+func (h *handler) list(w http.ResponseWriter, r *http.Request) {
+	host, ok := h.hostFromURL(w, r)
+	if !ok {
+		return
+	}
+	scans, err := h.d.Store.ListHostScans(r.Context(), host.ID, 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list scans")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"scans": scans, "count": len(scans)})
+}
+
+// get returns one scan's status + summary (polled by the UI while running).
+func (h *handler) get(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad scan id")
+		return
+	}
+	rec, err := h.d.Store.GetHostScan(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "scan not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
+// report serves the stored HTML report for in-UI viewing (sandboxed iframe) or
+// download. Authenticated via token query param. A restrictive CSP neutralizes
+// the report's inline scripts (no network/external loads) as defense in depth.
+func (h *handler) report(w http.ResponseWriter, r *http.Request) {
+	principal, err := h.d.Auth.AuthenticateToken(r.Context(), r.URL.Query().Get("token"))
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !principal.Has("Host.Scan") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad scan id", http.StatusBadRequest)
+		return
+	}
+	path, err := h.d.Store.HostScanReportPath(r.Context(), id)
+	if err != nil || path == "" {
+		http.Error(w, "report not found", http.StatusNotFound)
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.Error(w, "report not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.URL.Query().Get("download") != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scan-%s.html"`, id.String()[:8]))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (h *handler) audit(r *http.Request, action, targetID string, detail map[string]any) {
+	p := auth.MustPrincipal(r)
+	var actorID *uuid.UUID
+	var name string
+	if p != nil {
+		actorID = &p.UserID
+		name = p.Username
+	}
+	_, _ = h.d.Store.AppendAudit(r.Context(), models.AuditEvent{
+		ActorID: actorID, ActorName: name, Action: action,
+		TargetKind: "host", TargetID: targetID, Detail: detail,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}

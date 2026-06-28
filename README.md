@@ -42,6 +42,7 @@ Browser ──HTTPS/WS──> React SPA ──REST/WS──> Go Backend ──SS
 | Hosts | Inventory + **quick-connect Terminals launcher**, live SSH health monitoring, automated enrollment (password / private key / **SSH agent** / **no-install ssh-pipe**) |
 | CA | **Unique ephemeral cert per (user, host)**, CA rotation, revocation, lifecycle API |
 | Hardening | Per-IP rate limiting, idle/absolute session reaper, live-session termination, internet-exposure guide |
+| Compliance | One-click **OpenSCAP** security scans per host (auto-installs scanner; CIS/STIG/… profiles) with in-UI HTML reports + offline export |
 | Audit | Hash-chained audit with integrity verification + export; full auth event log |
 | Ops | Prometheus metrics, structured logs, health/ready endpoints, Docker/K8s/Helm/systemd artifacts |
 

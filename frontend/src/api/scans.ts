@@ -1,0 +1,64 @@
+import { api } from "./client";
+
+// OpenSCAP security/compliance scans per host (/hosts/{id}/scan*, /scans/{id}).
+
+export interface HostScan {
+  id: string;
+  hostId: string;
+  requester?: string;
+  profile?: string;
+  profileTitle?: string;
+  benchmark?: string;
+  status: string; // pending|running|completed|failed
+  score?: number;
+  passCount: number;
+  failCount: number;
+  otherCount: number;
+  totalRules: number;
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+}
+
+export interface ScanProfile {
+  id: string;
+  title: string;
+}
+
+export interface ScanProfilesResponse {
+  installed: boolean;
+  datastream: string;
+  profiles: ScanProfile[];
+}
+
+// Discover the SCAP profiles available on a host (no install; may be slow as it
+// reaches the host over SSH).
+export async function listScanProfiles(hostId: string): Promise<ScanProfilesResponse> {
+  const { data } = await api.get<ScanProfilesResponse>(`/api/v1/hosts/${hostId}/scan/profiles`);
+  return { installed: data.installed, datastream: data.datastream, profiles: data.profiles ?? [] };
+}
+
+// Start a scan. Empty profile -> the host's standard/baseline profile.
+export async function startScan(hostId: string, profile?: string): Promise<HostScan> {
+  const { data } = await api.post<HostScan>(`/api/v1/hosts/${hostId}/scan`, { profile: profile ?? "" });
+  return data;
+}
+
+export async function listHostScans(hostId: string): Promise<HostScan[]> {
+  const { data } = await api.get<{ scans: HostScan[] }>(`/api/v1/hosts/${hostId}/scans`);
+  return data.scans ?? [];
+}
+
+export async function getScan(id: string): Promise<HostScan> {
+  const { data } = await api.get<HostScan>(`/api/v1/scans/${id}`);
+  return data;
+}
+
+// URL for the stored HTML report (token-authenticated so it works in a sandboxed
+// iframe and as a direct download). download=1 forces an attachment.
+export function scanReportUrl(id: string, token: string, download = false): string {
+  const q = new URLSearchParams({ token });
+  if (download) q.set("download", "1");
+  return `/api/v1/scans/${id}/report?${q.toString()}`;
+}

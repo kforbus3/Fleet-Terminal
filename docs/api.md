@@ -314,6 +314,29 @@ An approval mints a `temporary_permissions` grant that expires automatically.
 
 ---
 
+## Security scans (OpenSCAP)
+
+All require `Host.Scan` (the report route authenticates via a `token` query param
+so it can be embedded/downloaded by the browser).
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/v1/hosts/{id}/scan/profiles` | Discover SCAP profiles available on the host (no install) |
+| POST | `/api/v1/hosts/{id}/scan` | Start a scan; body `{ "profile": "<id>" }` (empty = standard) |
+| GET | `/api/v1/hosts/{id}/scans` | List recent scans for the host |
+| GET | `/api/v1/scans/{id}` | One scan's status + summary (poll while running) |
+| GET | `/api/v1/scans/{id}/report?token=<jwt>[&download=1]` | Stored HTML report (sandboxed view / download) |
+
+The backend runs `oscap` over the gateway as the privileged host account
+(installing `openscap-scanner` + SCAP content if missing), stores the HTML report
+under `FLEET_SCAN_DIR`, and records a parsed summary:
+```json
+{ "id":"…","status":"completed","profile":"xccdf_org.ssgproject.content_profile_standard",
+  "score":86.7,"passCount":210,"failCount":32,"otherCount":40,"totalRules":282 }
+```
+
+---
+
 ## Certificates (CA lifecycle)
 
 | Method | Path | Required permission |

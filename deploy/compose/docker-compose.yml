@@ -53,6 +53,7 @@ services:
       FLEET_JUMP_USER: ${FLEET_JUMP_USER:-fleet}
       FLEET_JUMP_KNOWN_HOSTS: ${FLEET_JUMP_KNOWN_HOSTS:-}
       FLEET_RECORDING_DIR: /var/lib/fleet/recordings
+      FLEET_SCAN_DIR: /var/lib/fleet/scans
       FLEET_MAX_UPLOAD_BYTES: ${FLEET_MAX_UPLOAD_BYTES:-5368709120}
       # WireGuard overlay — managed-host enrollment uses these. Empty falls back
       # to the binary's defaults (see .env.example). FLEET_WG_JUMP_ENDPOINT MUST
@@ -91,6 +92,7 @@ services:
       FLEET_DB_MIN_CONNS: ${FLEET_DB_MIN_CONNS:-}
     volumes:
       - recordings:/var/lib/fleet/recordings
+      - scans:/var/lib/fleet/scans
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,6 +118,7 @@ volumes:
   pgdata:
   redisdata:
   recordings:
+  scans:
 
 networks:
   fleet:

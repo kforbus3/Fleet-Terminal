@@ -15,6 +15,7 @@ automatically on startup when `FLEET_MIGRATE_ON_START=true` (the default).
 | `0006_require_mfa.sql` | `require_mfa` system setting |
 | `0007_host_sudo.sql` | `Host.Sudo` permission (root vs login-only host access) |
 | `0008_branding.sql` | `branding` system setting (customizable app name) |
+| `0009_host_scans.sql` | `host_scans` table + `Host.Scan` permission (OpenSCAP scans) |
 
 **Extensions:** `pgcrypto` (`gen_random_uuid()`), `citext` (case-insensitive
 usernames/emails).
@@ -126,8 +127,8 @@ Seeded keys: `Host.View`, `Host.Connect`, `Host.Sudo`, `Host.Enroll`, `Host.Edit
 `Session.Replay`, `File.Transfer`, `Audit.View`, `Audit.Export`, `User.Create`,
 `User.Edit`, `User.Delete`, `User.ResetPassword`, `Group.Create`, `Group.Edit`,
 `Group.Delete`, `Role.Create`, `Role.Edit`, `Role.Delete`, `Approval.Request`,
-`Approval.Decide`, `Certificate.Manage`, `System.Configure`, `Admin.All`
-(wildcard).
+`Approval.Decide`, `Certificate.Manage`, `System.Configure`, `Host.Scan`,
+`Admin.All` (wildcard).
 
 ### `role_permissions`
 Join table. PK `(role_id, permission_key)`; both FKs CASCADE.

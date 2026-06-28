@@ -260,3 +260,33 @@ type AuthEvent struct {
 	Detail    map[string]any `json:"detail,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
 }
+
+// HostScan is one OpenSCAP security/compliance scan run against a host. The
+// full HTML report lives on disk (ReportPath); the summary fields are parsed
+// from the results for listing without opening the report.
+type HostScan struct {
+	ID           uuid.UUID  `json:"id"`
+	HostID       uuid.UUID  `json:"hostId"`
+	Hostname     string     `json:"hostname,omitempty"`
+	RequestedBy  *uuid.UUID `json:"requestedBy,omitempty"`
+	Requester    string     `json:"requester,omitempty"`
+	Profile      string     `json:"profile,omitempty"`
+	ProfileTitle string     `json:"profileTitle,omitempty"`
+	Benchmark    string     `json:"benchmark,omitempty"`
+	Status       string     `json:"status"` // pending|running|completed|failed
+	Score        *float64   `json:"score,omitempty"`
+	PassCount    int        `json:"passCount"`
+	FailCount    int        `json:"failCount"`
+	OtherCount   int        `json:"otherCount"`
+	TotalRules   int        `json:"totalRules"`
+	Error        string     `json:"error,omitempty"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+}
+
+// ScanProfile is a SCAP profile available in a host's datastream.
+type ScanProfile struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}

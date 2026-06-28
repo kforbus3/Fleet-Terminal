@@ -74,8 +74,8 @@ RBAC is backend-authoritative. The following roles are seeded:
 |------|--------------|
 | **Super Administrator** | `Admin.All` — wildcard, unrestricted |
 | **Administrator** | every permission except the `Admin.All` wildcard |
-| **Operator** | `Host.View`, `Host.Connect`, `Host.Sudo`, `Session.Start`, `Session.Replay`, `File.Transfer`, `Approval.Request` |
-| **Auditor** | `Host.View`, `Audit.View`, `Audit.Export`, `Session.Replay` |
+| **Operator** | `Host.View`, `Host.Connect`, `Host.Sudo`, `Host.Scan`, `Session.Start`, `Session.Replay`, `File.Transfer`, `Approval.Request` |
+| **Auditor** | `Host.View`, `Host.Scan`, `Audit.View`, `Audit.Export`, `Session.Replay` |
 | **Read-Only** | `Host.View` |
 
 The full permission catalog is in [database.md](./database.md#permissions). You

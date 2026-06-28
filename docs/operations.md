@@ -111,6 +111,19 @@ already-open connection, so it adds no extra SSH dials). View them per host via 
 a user has no factor, their next sign-in walks them through enrollment before any session is
 issued — no separate setup step needed.
 
+## Security scans (OpenSCAP)
+
+Click the **shield** (ⓗ) icon on a host row (needs `Host.Scan`) to run an OpenSCAP
+compliance scan. Pick a **profile** — the dialog discovers the profiles available on the
+host (CIS, STIG, PCI-DSS, …) and defaults to the standard baseline — then **Run scan**.
+
+- The backend runs `oscap` over the gateway as the privileged host account, **auto-installing
+  the scanner + SCAP content** if missing (so the first scan on a host can take a few minutes).
+- Scans run in the background; the history list updates as they finish, showing the **score**
+  and pass/fail counts.
+- **View** opens the full HTML report in a sandboxed in-app viewer; **Download** saves it for
+  offline viewing. Reports are stored under `FLEET_SCAN_DIR` (`/var/lib/fleet/scans`).
+
 ## Just-in-time access
 
 Users without permanent group access request temporary access under **Approvals → My requests**.

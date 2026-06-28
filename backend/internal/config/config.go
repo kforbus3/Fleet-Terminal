@@ -74,6 +74,9 @@ type Config struct {
 	// Session recordings storage
 	RecordingDir string
 
+	// OpenSCAP scan report storage
+	ScanDir string
+
 	// SFTP upload size cap in bytes (0 = unlimited).
 	MaxUploadBytes int64
 
@@ -122,6 +125,7 @@ func Load() (*Config, error) {
 		WGJumpEndpoint:     env("FLEET_WG_JUMP_ENDPOINT", "jumphost:51820"),
 		WGPort:             envInt("FLEET_WG_PORT", 51820),
 		RecordingDir:       env("FLEET_RECORDING_DIR", "/var/lib/fleet/recordings"),
+		ScanDir:            env("FLEET_SCAN_DIR", "/var/lib/fleet/scans"),
 		MaxUploadBytes:     envInt64("FLEET_MAX_UPLOAD_BYTES", 5<<30), // 5 GiB default
 		LogLevel:           env("FLEET_LOG_LEVEL", "info"),
 		LogFormat:          env("FLEET_LOG_FORMAT", "json"),
