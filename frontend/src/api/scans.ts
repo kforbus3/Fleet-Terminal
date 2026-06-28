@@ -65,10 +65,20 @@ export async function getScan(id: string): Promise<HostScan> {
   return data;
 }
 
-// URL for the stored HTML report (token-authenticated so it works in a sandboxed
-// iframe and as a direct download). download=1 forces an attachment.
+// URL for the stored HTML report (token-authenticated). Used for direct download
+// (download=1 forces an attachment). For in-app viewing we fetch the HTML and
+// render it via iframe srcdoc instead of framing this URL, so reverse-proxy
+// X-Frame-Options can't block it.
 export function scanReportUrl(id: string, token: string, download = false): string {
   const q = new URLSearchParams({ token });
   if (download) q.set("download", "1");
   return `/api/v1/scans/${id}/report?${q.toString()}`;
+}
+
+// Fetch the report HTML for in-app (sandboxed srcdoc) viewing.
+export async function fetchScanReport(id: string, token: string): Promise<string> {
+  const { data } = await api.get<string>(`/api/v1/scans/${id}/report`, {
+    params: { token }, responseType: "text",
+  });
+  return data;
 }

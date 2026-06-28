@@ -220,8 +220,8 @@ command -v oscap >/dev/null 2>&1 || { echo "STATUS=missing"; exit 0; }
 ID=$(. /etc/os-release 2>/dev/null; echo "$ID"); VER=$(. /etc/os-release 2>/dev/null; echo "$VERSION_ID" | tr -d .)
 DS=""
 for c in "$C/ssg-${ID}${VER}-ds.xml" "$C/ssg-${ID}-ds.xml"; do [ -f "$c" ] && DS="$c" && break; done
-[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | grep -i "$ID" | head -1)
-[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | head -1)
+[ -z "$DS" ] && DS=$(ls "$C"/ssg-${ID}*-ds.xml 2>/dev/null | sort -rV | head -1)
+[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | sort -rV | head -1)
 [ -z "$DS" ] && { echo "STATUS=nocontent"; exit 0; }
 echo "STATUS=ok"
 echo "DATASTREAM=$DS"
@@ -274,8 +274,8 @@ if [ ! -f /usr/share/openscap/cpe/openscap-cpe-dict.xml ]; then sudo mkdir -p /u
 ID=$(. /etc/os-release 2>/dev/null; echo "$ID"); VER=$(. /etc/os-release 2>/dev/null; echo "$VERSION_ID" | tr -d .)
 DS=""
 for c in "$C/ssg-${ID}${VER}-ds.xml" "$C/ssg-${ID}-ds.xml"; do [ -f "$c" ] && DS="$c" && break; done
-[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | grep -i "$ID" | head -1)
-[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | head -1)
+[ -z "$DS" ] && DS=$(ls "$C"/ssg-${ID}*-ds.xml 2>/dev/null | sort -rV | head -1)
+[ -z "$DS" ] && DS=$(ls "$C"/ssg-*-ds.xml 2>/dev/null | sort -rV | head -1)
 [ -z "$DS" ] && { echo "STATUS=no_content"; exit 0; }
 PROFILE='%s'
 if [ -z "$PROFILE" ]; then

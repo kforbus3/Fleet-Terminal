@@ -27,7 +27,8 @@ import {
 } from "../api/hosts";
 import { listGroups, listUsers } from "../api/admin";
 import {
-  listScanProfiles, listHostScans, startScan, prepareScan, scanReportUrl, type HostScan,
+  listScanProfiles, listHostScans, startScan, prepareScan, scanReportUrl, fetchScanReport,
+  type HostScan,
 } from "../api/scans";
 import { useAuthStore } from "../store/auth";
 import {
@@ -557,8 +558,9 @@ function ScanRow({ scan, token, onView }: { scan: HostScan; token: string; onVie
         <Chip size="small" label={scan.status} color={scanColor(scan.status)} />
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
           <Typography variant="body2" noWrap>{scan.profileTitle || scan.profile || "Standard profile"}</Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
             {fmtDate(scan.createdAt)}{scan.requester ? ` · ${scan.requester}` : ""}
+            {scan.benchmark ? ` · ${scan.benchmark.split("/").pop()}` : ""}
           </Typography>
         </Box>
         {active && <CircularProgress size={18} />}
@@ -587,6 +589,13 @@ function ScanRow({ scan, token, onView }: { scan: HostScan; token: string; onVie
 }
 
 function ScanReportViewer({ scanId, token, onClose }: { scanId: string | null; token: string; onClose: () => void }) {
+  // Fetch the HTML and render via srcdoc (sandboxed) rather than framing the URL,
+  // so a reverse proxy's X-Frame-Options can't block the embed.
+  const { data: html, isLoading, isError } = useQuery({
+    queryKey: ["scan-report", scanId],
+    queryFn: () => fetchScanReport(scanId as string, token),
+    enabled: Boolean(scanId),
+  });
   return (
     <Dialog open={Boolean(scanId)} onClose={onClose} fullWidth maxWidth="lg" PaperProps={{ sx: { height: "90vh" } }}>
       <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -595,10 +604,12 @@ function ScanReportViewer({ scanId, token, onClose }: { scanId: string | null; t
         <Button size="small" onClick={onClose}>Close</Button>
       </DialogTitle>
       <DialogContent sx={{ p: 0 }}>
-        {scanId && (
+        {isLoading && <Box sx={{ p: 4, textAlign: "center" }}><CircularProgress /></Box>}
+        {isError && <Alert severity="error" sx={{ m: 2 }}>Could not load the report.</Alert>}
+        {html && (
           <iframe
             title="OpenSCAP report"
-            src={scanReportUrl(scanId, token)}
+            srcDoc={html}
             sandbox="allow-scripts"
             style={{ width: "100%", height: "100%", border: "none" }}
           />
