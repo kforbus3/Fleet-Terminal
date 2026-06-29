@@ -124,8 +124,10 @@ host (CIS, STIG, PCI-DSS, …) and defaults to the standard baseline — then **
 - The backend runs `oscap` over the gateway as the privileged host account, **auto-installing
   the scanner + SCAP content** if missing (so the first scan on a host can take a few minutes).
 - Strict profiles (e.g. **ANSSI High**) run many filesystem-walking checks and can take **tens of
-  minutes** on a busy host. Fleet caps a scan at **`FLEET_SCAN_TIMEOUT`** (default **60m**); raise
-  it if heavy scans are being cut off, or use a lighter profile for routine checks.
+  minutes** on a busy host (the cost is the number of files in users' home directories, not bytes).
+  Fleet caps a scan at the **scan timeout** — adjust it in **Settings → Security scans** (5–480 min;
+  overrides the `FLEET_SCAN_TIMEOUT` default of 60m). Raise it for hosts with very large
+  filesystems, or use a lighter profile for routine checks.
 - Scans run in the background; the history list updates as they finish, showing the **score**
   and pass/fail counts.
 - **View** opens the full HTML report in a sandboxed in-app viewer; **Download** saves it for

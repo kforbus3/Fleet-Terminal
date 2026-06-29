@@ -7,6 +7,7 @@ package scan
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,15 +28,37 @@ import (
 	"github.com/fleet-terminal/backend/internal/store"
 )
 
-// defaultScanTimeout is used if the config doesn't set one.
-const defaultScanTimeout = 60 * time.Minute
+const (
+	defaultScanTimeout = 60 * time.Minute
+	minScanTimeout     = 5 * time.Minute
+	maxScanTimeout     = 8 * time.Hour
+)
 
-// scanTimeout returns the configured scan/remediation timeout.
+// scanTimeout resolves the scan/remediation budget. Precedence: the `scan_policy`
+// setting (timeoutMinutes, editable in the UI) overrides FLEET_SCAN_TIMEOUT,
+// which overrides the built-in default. Clamped to a sane range.
 func (s *Service) scanTimeout() time.Duration {
+	d := defaultScanTimeout
 	if s.cfg != nil && s.cfg.ScanTimeout > 0 {
-		return s.cfg.ScanTimeout
+		d = s.cfg.ScanTimeout
 	}
-	return defaultScanTimeout
+	rctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if raw, err := s.store.GetSetting(rctx, "scan_policy"); err == nil {
+		var sp struct {
+			TimeoutMinutes int `json:"timeoutMinutes"`
+		}
+		if json.Unmarshal(raw, &sp) == nil && sp.TimeoutMinutes > 0 {
+			d = time.Duration(sp.TimeoutMinutes) * time.Minute
+		}
+	}
+	if d < minScanTimeout {
+		d = minScanTimeout
+	}
+	if d > maxScanTimeout {
+		d = maxScanTimeout
+	}
+	return d
 }
 
 // profileIDRe guards the profile id we interpolate into the remote shell.
