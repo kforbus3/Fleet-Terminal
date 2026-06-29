@@ -280,6 +280,7 @@ type HostScan struct {
 	OtherCount   int        `json:"otherCount"`
 	TotalRules   int        `json:"totalRules"`
 	Error        string     `json:"error,omitempty"`
+	SkipRules    []string   `json:"skipRules,omitempty"`
 	StartedAt    *time.Time `json:"startedAt,omitempty"`
 	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
 	CreatedAt    time.Time  `json:"createdAt"`

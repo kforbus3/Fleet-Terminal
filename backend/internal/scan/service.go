@@ -288,6 +288,7 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string, skipRule
 	sum := store.ScanSummary{
 		PassCount: pass, FailCount: failCnt, OtherCount: other,
 		TotalRules: pass + failCnt + other, ReportPath: reportPath, ResultsPath: resultsPath,
+		SkipRules: skipRules,
 	}
 	if v, perr := strconv.ParseFloat(strings.TrimSpace(meta["SCORE"]), 64); perr == nil {
 		sum.Score = &v

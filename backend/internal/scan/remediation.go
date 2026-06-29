@@ -116,7 +116,8 @@ func (s *Service) Remediate(remID uuid.UUID, scan *models.HostScan, host *models
 	// Verify with a fresh scan using the same profile.
 	var rescanID *uuid.UUID
 	if rec, err := s.store.CreateHostScan(ctx, host.ID, requestedBy, requester, scan.Profile); err == nil {
-		s.Run(rec.ID, host, scan.Profile, nil) // synchronous within this goroutine
+		// Reuse the original scan's skipped rules so the re-scan isn't slower.
+		s.Run(rec.ID, host, scan.Profile, scan.SkipRules) // synchronous within this goroutine
 		rescanID = &rec.ID
 	} else {
 		s.log.Warn("remediation rescan create", "err", err)

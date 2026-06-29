@@ -16,6 +16,7 @@ export interface HostScan {
   otherCount: number;
   totalRules: number;
   error?: string;
+  skipRules?: string[];
   startedAt?: string;
   finishedAt?: string;
   createdAt: string;

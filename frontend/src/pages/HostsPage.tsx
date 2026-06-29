@@ -595,6 +595,7 @@ function ScanRow({ scan, token, onView, onRemediate }: {
           <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
             {fmtDate(scan.createdAt)}{scan.requester ? ` · ${scan.requester}` : ""}
             {scan.benchmark ? ` · ${scan.benchmark.split("/").pop()}` : ""}
+            {scan.skipRules && scan.skipRules.length > 0 ? ` · ${scan.skipRules.length} rules skipped` : ""}
           </Typography>
         </Box>
         {active && <CircularProgress size={18} />}
