@@ -76,6 +76,48 @@ export function scanReportUrl(id: string, token: string, download = false): stri
   return `/api/v1/scans/${id}/report?${q.toString()}`;
 }
 
+export interface ScanFinding {
+  ruleId: string;
+  title: string;
+  severity?: string;
+  result: string;
+  accessImpacting: boolean;
+}
+
+export interface HostRemediation {
+  id: string;
+  scanId: string;
+  hostId: string;
+  requester?: string;
+  ruleIds: string[];
+  status: string; // pending|running|completed|failed
+  exitCode?: number;
+  output?: string;
+  rescanId?: string;
+  error?: string;
+  createdAt: string;
+}
+
+export async function listFindings(scanId: string): Promise<ScanFinding[]> {
+  const { data } = await api.get<{ findings: ScanFinding[] }>(`/api/v1/scans/${scanId}/findings`);
+  return data.findings ?? [];
+}
+
+export async function previewRemediation(scanId: string, ruleIds: string[]): Promise<string> {
+  const { data } = await api.post<{ script: string }>(`/api/v1/scans/${scanId}/remediation/preview`, { ruleIds });
+  return data.script ?? "";
+}
+
+export async function remediate(scanId: string, ruleIds: string[], confirmAccessImpacting: boolean): Promise<HostRemediation> {
+  const { data } = await api.post<HostRemediation>(`/api/v1/scans/${scanId}/remediate`, { ruleIds, confirmAccessImpacting });
+  return data;
+}
+
+export async function remediationStatus(id: string): Promise<HostRemediation> {
+  const { data } = await api.get<HostRemediation>(`/api/v1/remediations/${id}`);
+  return data;
+}
+
 // Fetch the report HTML for in-app (sandboxed srcdoc) viewing.
 export async function fetchScanReport(id: string, token: string): Promise<string> {
   const { data } = await api.get<string>(`/api/v1/scans/${id}/report`, {

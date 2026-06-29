@@ -290,3 +290,30 @@ type ScanProfile struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 }
+
+// ScanFinding is one rule outcome from a scan (used to list failures the user
+// can choose to remediate).
+type ScanFinding struct {
+	RuleID          string `json:"ruleId"`
+	Title           string `json:"title"`
+	Severity        string `json:"severity,omitempty"`
+	Result          string `json:"result"`
+	AccessImpacting bool   `json:"accessImpacting"`
+}
+
+// HostRemediation is one remediation run: the selected rules and its outcome.
+type HostRemediation struct {
+	ID         uuid.UUID  `json:"id"`
+	ScanID     uuid.UUID  `json:"scanId"`
+	HostID     uuid.UUID  `json:"hostId"`
+	Requester  string     `json:"requester,omitempty"`
+	RuleIDs    []string   `json:"ruleIds"`
+	Status     string     `json:"status"` // pending|running|completed|failed
+	ExitCode   *int       `json:"exitCode,omitempty"`
+	Output     string     `json:"output,omitempty"`
+	RescanID   *uuid.UUID `json:"rescanId,omitempty"`
+	Error      string     `json:"error,omitempty"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+}

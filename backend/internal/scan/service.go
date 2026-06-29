@@ -175,7 +175,7 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 		return
 	}
 
-	head, report, ok := strings.Cut(out, reportDelimiter)
+	head, body, ok := strings.Cut(out, reportDelimiter)
 	meta := parseKV(head)
 	if status := meta["STATUS"]; status != "ok" {
 		if status == "" {
@@ -188,6 +188,9 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 		fail("oscap: " + status)
 		return
 	}
+	report, results, _ := strings.Cut(body, resultsDelimiter)
+	report = strings.TrimLeft(report, "\r\n")
+	results = strings.TrimLeft(results, "\r\n")
 	if !ok || strings.TrimSpace(report) == "" {
 		fail("oscap produced no report")
 		return
@@ -197,20 +200,28 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 		s.log.Warn("host scan start record", "scan", scanID, "err", err)
 	}
 
-	reportPath := filepath.Join(s.cfg.ScanDir, scanID.String()+".html")
 	if err := os.MkdirAll(s.cfg.ScanDir, 0o750); err != nil {
 		fail("store report: " + err.Error())
 		return
 	}
+	reportPath := filepath.Join(s.cfg.ScanDir, scanID.String()+".html")
 	if err := os.WriteFile(reportPath, []byte(report), 0o640); err != nil {
 		fail("write report: " + err.Error())
 		return
+	}
+	resultsPath := ""
+	if strings.TrimSpace(results) != "" {
+		resultsPath = filepath.Join(s.cfg.ScanDir, scanID.String()+".results.xml")
+		if err := os.WriteFile(resultsPath, []byte(results), 0o640); err != nil {
+			s.log.Warn("write results xml", "scan", scanID, "err", err)
+			resultsPath = ""
+		}
 	}
 
 	pass, failCnt, other := atoi(meta["PASS"]), atoi(meta["FAIL"]), atoi(meta["OTHER"])
 	sum := store.ScanSummary{
 		PassCount: pass, FailCount: failCnt, OtherCount: other,
-		TotalRules: pass + failCnt + other, ReportPath: reportPath,
+		TotalRules: pass + failCnt + other, ReportPath: reportPath, ResultsPath: resultsPath,
 	}
 	if v, perr := strconv.ParseFloat(strings.TrimSpace(meta["SCORE"]), 64); perr == nil {
 		sum.Score = &v
@@ -226,6 +237,7 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 // --- remote scripts ---
 
 const reportDelimiter = "=====FLEET_REPORT_HTML_BEGIN====="
+const resultsDelimiter = "=====FLEET_RESULTS_XML_BEGIN====="
 
 const discoverScript = `C=/usr/share/xml/scap/ssg/content
 command -v oscap >/dev/null 2>&1 || { echo "STATUS=missing"; exit 0; }
@@ -328,6 +340,8 @@ echo "FAIL=$FAIL"
 echo "OTHER=$((ERR+OTH))"
 echo "` + reportDelimiter + `"
 cat "$R-report.html"
+echo "` + resultsDelimiter + `"
+cat "$R-results.xml"
 sudo rm -f "$R-results.xml" "$R-report.html" 2>/dev/null`
 
 // --- helpers ---

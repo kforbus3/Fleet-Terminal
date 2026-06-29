@@ -127,6 +127,20 @@ host (CIS, STIG, PCI-DSS, …) and defaults to the standard baseline — then **
   and pass/fail counts.
 - **View** opens the full HTML report in a sandboxed in-app viewer; **Download** saves it for
   offline viewing. Reports are stored under `FLEET_SCAN_DIR` (`/var/lib/fleet/scans`).
+
+### Remediating failures
+
+On a completed scan with failures, **Remediate** (needs `Host.Remediate`, admin-only by default)
+lists the failed rules so you can **select which to fix**:
+
+- **Preview** shows the exact bash `oscap` would run for the selected rules — review before applying.
+- **Apply** generates the fixes on the host, runs them under sudo, then **re-scans** to verify; the
+  new score appears as the latest scan in the history. The run's output is shown in the dialog and
+  audited (`host.remediate`).
+- Rules that touch SSH, the firewall, or account lockout are flagged **⚠ access-impacting** because
+  their fixes can sever Fleet's own access to the host; applying any of them requires an explicit
+  extra confirmation. **Remediation changes host configuration and is not automatically reversible —
+  test on non-critical hosts first.**
 - The scan needs SCAP content matching the host's **OS version** (e.g. `ssg-debian13-ds.xml`
   for Debian 13). If a host's distro is newer than its packaged `scap-security-guide`, Fleet
   **auto-provisions** the right datastream: the backend downloads the ComplianceAsCode release

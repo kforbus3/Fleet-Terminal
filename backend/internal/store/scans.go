@@ -41,21 +41,29 @@ func (s *Store) StartHostScan(ctx context.Context, id uuid.UUID, profile, profil
 
 // ScanSummary holds parsed results persisted on completion.
 type ScanSummary struct {
-	Score      *float64
-	PassCount  int
-	FailCount  int
-	OtherCount int
-	TotalRules int
-	ReportPath string
+	Score       *float64
+	PassCount   int
+	FailCount   int
+	OtherCount  int
+	TotalRules  int
+	ReportPath  string
+	ResultsPath string
 }
 
-// CompleteHostScan marks a scan completed with its summary + report path.
+// CompleteHostScan marks a scan completed with its summary + report/results paths.
 func (s *Store) CompleteHostScan(ctx context.Context, id uuid.UUID, sum ScanSummary) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE host_scans SET status='completed', score=$2, pass_count=$3, fail_count=$4,
-		 other_count=$5, total_rules=$6, report_path=$7, finished_at=now() WHERE id=$1`,
-		id, sum.Score, sum.PassCount, sum.FailCount, sum.OtherCount, sum.TotalRules, sum.ReportPath)
+		 other_count=$5, total_rules=$6, report_path=$7, results_path=$8, finished_at=now() WHERE id=$1`,
+		id, sum.Score, sum.PassCount, sum.FailCount, sum.OtherCount, sum.TotalRules, sum.ReportPath, sum.ResultsPath)
 	return err
+}
+
+// ScanResultsPath returns the on-disk results XML path for a scan.
+func (s *Store) ScanResultsPath(ctx context.Context, id uuid.UUID) (string, error) {
+	var p string
+	err := s.pool.QueryRow(ctx, `SELECT results_path FROM host_scans WHERE id=$1`, id).Scan(&p)
+	return p, err
 }
 
 // FailHostScan marks a scan failed with an error message.
