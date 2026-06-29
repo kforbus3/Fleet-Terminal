@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -103,7 +104,9 @@ func (h *handler) prepare(w http.ResponseWriter, r *http.Request) {
 }
 
 type startReq struct {
-	Profile string `json:"profile"`
+	Profile              string   `json:"profile"`
+	SkipExpensiveFsRules bool     `json:"skipExpensiveFsRules"`
+	SkipRules            []string `json:"skipRules"`
 }
 
 // start creates a scan record and kicks off the scan in the background.
@@ -116,15 +119,35 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&rq) // body optional; empty profile -> standard
 	p := auth.MustPrincipal(r)
 
+	// Rules to exclude: the expensive-filesystem preset (if requested) plus any
+	// explicit ids, de-duplicated.
+	skip := map[string]bool{}
+	var skipRules []string
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id != "" && !skip[id] {
+			skip[id] = true
+			skipRules = append(skipRules, id)
+		}
+	}
+	if rq.SkipExpensiveFsRules {
+		for _, id := range ExpensiveFSRules {
+			add(id)
+		}
+	}
+	for _, id := range rq.SkipRules {
+		add(id)
+	}
+
 	rec, err := h.d.Store.CreateHostScan(r.Context(), host.ID, &p.UserID, p.Username, rq.Profile)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create scan")
 		return
 	}
-	go h.svc.Run(rec.ID, host, rq.Profile)
+	go h.svc.Run(rec.ID, host, rq.Profile, skipRules)
 
 	h.audit(r, "host.scan", rec.ID.String(), map[string]any{
-		"hostId": host.ID, "hostname": host.Hostname, "profile": rq.Profile,
+		"hostId": host.ID, "hostname": host.Hostname, "profile": rq.Profile, "skipped": len(skipRules),
 	})
 	writeJSON(w, http.StatusAccepted, rec)
 }

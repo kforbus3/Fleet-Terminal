@@ -51,8 +51,17 @@ export async function prepareScan(hostId: string): Promise<void> {
 }
 
 // Start a scan. Empty profile -> the host's standard/baseline profile.
-export async function startScan(hostId: string, profile?: string): Promise<HostScan> {
-  const { data } = await api.post<HostScan>(`/api/v1/hosts/${hostId}/scan`, { profile: profile ?? "" });
+export interface StartScanOptions {
+  skipExpensiveFsRules?: boolean;
+  skipRules?: string[];
+}
+
+export async function startScan(hostId: string, profile?: string, opts?: StartScanOptions): Promise<HostScan> {
+  const { data } = await api.post<HostScan>(`/api/v1/hosts/${hostId}/scan`, {
+    profile: profile ?? "",
+    skipExpensiveFsRules: opts?.skipExpensiveFsRules ?? false,
+    skipRules: opts?.skipRules ?? [],
+  });
   return data;
 }
 

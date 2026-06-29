@@ -457,6 +457,8 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
   const token = useAuthStore((s) => s.accessToken) ?? "";
   const canRemediate = useAuthStore((s) => s.has)("Host.Remediate");
   const [profile, setProfile] = useState("");
+  const [skipExpensive, setSkipExpensive] = useState(false);
+  const [skipRulesText, setSkipRulesText] = useState("");
   const [reportId, setReportId] = useState<string | null>(null);
   const [remediateScan, setRemediateScan] = useState<HostScan | null>(null);
 
@@ -491,7 +493,10 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
   });
 
   const runMut = useMutation({
-    mutationFn: () => startScan(hostId, profile),
+    mutationFn: () => startScan(hostId, profile, {
+      skipExpensiveFsRules: skipExpensive,
+      skipRules: skipRulesText.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+    }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["host-scans", hostId] }),
   });
 
@@ -519,6 +524,19 @@ function HostScanDialog({ host, onClose }: { host: Host | null; onClose: () => v
               {runMut.isPending ? "Starting…" : "Run scan"}
             </Button>
           </Stack>
+
+          <FormControlLabel
+            control={<Checkbox size="small" checked={skipExpensive} onChange={(e) => setSkipExpensive(e.target.checked)} />}
+            label="Skip slow filesystem rules (home-dir / world-writable / SUID audits)"
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1, ml: 4, mt: -0.5 }}>
+            Much faster on hosts with many files; those rules are excluded from this scan and its score.
+          </Typography>
+          <TextField
+            size="small" fullWidth label="Also skip these rule IDs (optional, comma/space separated)"
+            value={skipRulesText} onChange={(e) => setSkipRulesText(e.target.value)} sx={{ mb: 1 }}
+            placeholder="xccdf_org.ssgproject.content_rule_…"
+          />
 
           {/* The picker needs the scanner installed AND content matching the host OS. */}
           {prof && (!prof.installed || !prof.exact) && (

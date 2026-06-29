@@ -128,6 +128,10 @@ host (CIS, STIG, PCI-DSS, …) and defaults to the standard baseline — then **
   Fleet caps a scan at the **scan timeout** — adjust it in **Settings → Security scans** (5–480 min;
   overrides the `FLEET_SCAN_TIMEOUT` default of 60m). Raise it for hosts with very large
   filesystems, or use a lighter profile for routine checks.
+- Alternatively, tick **"Skip slow filesystem rules"** in the scan dialog to exclude the
+  filesystem-walking rules (home-dir ownership/permissions, world-writable/SUID/SGID/unowned-file
+  audits) — High then finishes in minutes. An advanced field accepts additional rule IDs to skip.
+  Skipped rules are excluded from the scan and its score (`oscap --skip-rule`).
 - Scans run in the background; the history list updates as they finish, showing the **score**
   and pass/fail counts.
 - **View** opens the full HTML report in a sandboxed in-app viewer; **Download** saves it for

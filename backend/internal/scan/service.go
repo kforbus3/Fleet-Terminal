@@ -64,6 +64,21 @@ func (s *Service) scanTimeout() time.Duration {
 // profileIDRe guards the profile id we interpolate into the remote shell.
 var profileIDRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]*$`)
 
+// ExpensiveFSRules are SSG rules whose checks recursively walk the filesystem
+// (home directories, world-writable/SUID/SGID/unowned files). On hosts with many
+// files they dominate scan time, so they're offered as a one-click skip.
+var ExpensiveFSRules = []string{
+	"xccdf_org.ssgproject.content_rule_accounts_users_home_files_permissions",
+	"xccdf_org.ssgproject.content_rule_accounts_users_home_files_ownership",
+	"xccdf_org.ssgproject.content_rule_accounts_users_home_files_groupownership",
+	"xccdf_org.ssgproject.content_rule_file_permissions_unauthorized_world_writable",
+	"xccdf_org.ssgproject.content_rule_file_permissions_unauthorized_suid",
+	"xccdf_org.ssgproject.content_rule_file_permissions_unauthorized_sgid",
+	"xccdf_org.ssgproject.content_rule_dir_perms_world_writable_sticky_bits",
+	"xccdf_org.ssgproject.content_rule_no_files_unowned_by_user",
+	"xccdf_org.ssgproject.content_rule_file_permissions_ungroupowned",
+}
+
 // Service orchestrates scans. It mirrors the monitor: a system signer maps to
 // the privileged host account, dialed through the jump host.
 type Service struct {
@@ -175,15 +190,19 @@ func (s *Service) EnsureInstalled(h *models.Host) {
 	}()
 }
 
-// Run executes a scan in the background and records its outcome. It is launched
-// in its own goroutine by the handler; ctx should be detached (context.Background).
-func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
+// Run executes a scan in the background and records its outcome. skipRules are
+// rule ids excluded from the evaluation (oscap --skip-rule). It is launched in
+// its own goroutine by the handler; ctx should be detached (context.Background).
+func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string, skipRules []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.scanTimeout())
 	defer cancel()
 
 	fail := func(msg string) {
 		s.log.Warn("host scan failed", "host", h.Hostname, "scan", scanID, "err", msg)
-		_ = s.store.FailHostScan(ctx, scanID, msg)
+		// Record the failure with a fresh context — the main one may have expired.
+		fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer fcancel()
+		_ = s.store.FailHostScan(fctx, scanID, msg)
 	}
 
 	if !profileIDRe.MatchString(profile) {
@@ -207,7 +226,16 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 	if hostBudget < 60 {
 		hostBudget = 60
 	}
-	out, err := runScript(ctx, conn, fmt.Sprintf(scanScript, hostBudget, profile))
+	// Build the (validated) --skip-rule arguments for excluded rules.
+	var skip strings.Builder
+	for _, r := range skipRules {
+		if ruleIDRe.MatchString(r) {
+			skip.WriteString("--skip-rule ")
+			skip.WriteString(r)
+			skip.WriteString(" ")
+		}
+	}
+	out, err := runScript(ctx, conn, fmt.Sprintf(scanScript, hostBudget, strings.TrimSpace(skip.String()), profile))
 	if err != nil {
 		fail("run oscap: " + err.Error())
 		return
@@ -314,9 +342,11 @@ echo done`
 // scanScript installs oscap + SCAP content if missing, resolves the host's
 // datastream, evaluates the given profile (empty -> the standard profile), and
 // prints a key/value summary followed by the HTML report after the delimiter.
-// First %d is the host-side oscap time budget (seconds); %s is the validated
-// profile id. No `set -e`: oscap returns 2 when rules fail.
+// %d is the host-side oscap time budget (seconds); the first %s is the
+// (validated) --skip-rule arguments; the second %s is the validated profile id.
+// No `set -e`: oscap returns 2 when rules fail.
 const scanScript = `TMO=%d
+SKIP='%s'
 C=/usr/share/xml/scap/ssg/content
 if ! command -v oscap >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openscap-scanner >/dev/null 2>&1;
@@ -350,7 +380,7 @@ fi
 [ -z "$PROFILE" ] && { echo "STATUS=no_profile"; exit 0; }
 PT=$(oscap info --profiles "$DS" 2>/dev/null | grep -F "$PROFILE:" | head -1 | cut -d: -f2-)
 R=/tmp/fleet-scan-$$
-sudo timeout "$TMO" oscap xccdf eval --profile "$PROFILE" --results "$R-results.xml" --report "$R-report.html" "$DS" >"$R-out.log" 2>&1
+sudo timeout "$TMO" oscap xccdf eval $SKIP --profile "$PROFILE" --results "$R-results.xml" --report "$R-report.html" "$DS" >"$R-out.log" 2>&1
 RC=$?
 if [ $RC -ne 0 ] && [ $RC -ne 2 ]; then
   echo "STATUS=eval_failed_rc_$RC"
