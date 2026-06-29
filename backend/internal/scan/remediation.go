@@ -6,7 +6,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -14,11 +13,10 @@ import (
 )
 
 var (
-	ruleIDRe      = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
-	benchmarkRe   = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
-	scriptDelim   = "=====FLEET_FIX_SCRIPT====="
-	outputDelim   = "=====FLEET_FIX_OUTPUT====="
-	remediateTime = 30 * time.Minute
+	ruleIDRe    = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	benchmarkRe = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
+	scriptDelim = "=====FLEET_FIX_SCRIPT====="
+	outputDelim = "=====FLEET_FIX_OUTPUT====="
 )
 
 // Findings returns the failed rules from a completed scan's stored results.
@@ -82,7 +80,8 @@ func (s *Service) PreviewFix(ctx context.Context, scan *models.HostScan, host *m
 // Remediate applies fixes for the selected rules in the background, then re-scans
 // to verify. The remediation record is updated with the outcome + re-scan id.
 func (s *Service) Remediate(remID uuid.UUID, scan *models.HostScan, host *models.Host, ruleIDs []string, requestedBy *uuid.UUID, requester string) {
-	ctx, cancel := context.WithTimeout(context.Background(), remediateTime)
+	// Covers apply + the synchronous verification re-scan (a full scan each).
+	ctx, cancel := context.WithTimeout(context.Background(), 2*s.scanTimeout())
 	defer cancel()
 	failRem := func(msg string) {
 		s.log.Warn("remediation failed", "host", host.Hostname, "rem", remID, "err", msg)

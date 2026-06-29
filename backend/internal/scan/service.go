@@ -27,8 +27,16 @@ import (
 	"github.com/fleet-terminal/backend/internal/store"
 )
 
-// scanTimeout bounds a full scan (install + evaluate); oscap runs can be slow.
-const scanTimeout = 30 * time.Minute
+// defaultScanTimeout is used if the config doesn't set one.
+const defaultScanTimeout = 60 * time.Minute
+
+// scanTimeout returns the configured scan/remediation timeout.
+func (s *Service) scanTimeout() time.Duration {
+	if s.cfg != nil && s.cfg.ScanTimeout > 0 {
+		return s.cfg.ScanTimeout
+	}
+	return defaultScanTimeout
+}
 
 // profileIDRe guards the profile id we interpolate into the remote shell.
 var profileIDRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]*$`)
@@ -147,7 +155,7 @@ func (s *Service) EnsureInstalled(h *models.Host) {
 // Run executes a scan in the background and records its outcome. It is launched
 // in its own goroutine by the handler; ctx should be detached (context.Background).
 func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
-	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.scanTimeout())
 	defer cancel()
 
 	fail := func(msg string) {
@@ -169,7 +177,14 @@ func (s *Service) Run(scanID uuid.UUID, h *models.Host, profile string) {
 	// Make sure the host has content matching its OS version before evaluating.
 	s.ensureContent(ctx, conn, h)
 
-	out, err := runScript(ctx, conn, fmt.Sprintf(scanScript, profile))
+	// Host-side oscap budget: a minute under Fleet's session timeout so oscap is
+	// killed cleanly on the host (and reports rc 124) before the SSH session is
+	// torn down — avoiding an orphaned oscap that keeps a core pegged.
+	hostBudget := int(s.scanTimeout().Seconds()) - 60
+	if hostBudget < 60 {
+		hostBudget = 60
+	}
+	out, err := runScript(ctx, conn, fmt.Sprintf(scanScript, hostBudget, profile))
 	if err != nil {
 		fail("run oscap: " + err.Error())
 		return
@@ -276,8 +291,10 @@ echo done`
 // scanScript installs oscap + SCAP content if missing, resolves the host's
 // datastream, evaluates the given profile (empty -> the standard profile), and
 // prints a key/value summary followed by the HTML report after the delimiter.
-// %s is the validated profile id. No `set -e`: oscap returns 2 when rules fail.
-const scanScript = `C=/usr/share/xml/scap/ssg/content
+// First %d is the host-side oscap time budget (seconds); %s is the validated
+// profile id. No `set -e`: oscap returns 2 when rules fail.
+const scanScript = `TMO=%d
+C=/usr/share/xml/scap/ssg/content
 if ! command -v oscap >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openscap-scanner >/dev/null 2>&1;
   elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y openscap-scanner >/dev/null 2>&1;
@@ -310,7 +327,7 @@ fi
 [ -z "$PROFILE" ] && { echo "STATUS=no_profile"; exit 0; }
 PT=$(oscap info --profiles "$DS" 2>/dev/null | grep -F "$PROFILE:" | head -1 | cut -d: -f2-)
 R=/tmp/fleet-scan-$$
-sudo oscap xccdf eval --profile "$PROFILE" --results "$R-results.xml" --report "$R-report.html" "$DS" >"$R-out.log" 2>&1
+sudo timeout "$TMO" oscap xccdf eval --profile "$PROFILE" --results "$R-results.xml" --report "$R-report.html" "$DS" >"$R-out.log" 2>&1
 RC=$?
 if [ $RC -ne 0 ] && [ $RC -ne 2 ]; then
   echo "STATUS=eval_failed_rc_$RC"
