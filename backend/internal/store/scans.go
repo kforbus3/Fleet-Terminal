@@ -59,6 +59,18 @@ func (s *Store) CompleteHostScan(ctx context.Context, id uuid.UUID, sum ScanSumm
 	return err
 }
 
+// FailStaleScans marks scans still pending/running as failed. A scan's worker
+// runs in memory, so any such row at startup was orphaned by a restart.
+func (s *Store) FailStaleScans(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE host_scans SET status='failed', error='interrupted (server restarted)', finished_at=now()
+		 WHERE status IN ('pending','running')`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ScanResultsPath returns the on-disk results XML path for a scan.
 func (s *Store) ScanResultsPath(ctx context.Context, id uuid.UUID) (string, error) {
 	var p string

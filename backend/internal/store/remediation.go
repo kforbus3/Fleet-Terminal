@@ -55,6 +55,18 @@ func (s *Store) FailRemediation(ctx context.Context, id uuid.UUID, msg string) e
 	return err
 }
 
+// FailStaleRemediations marks remediations still pending/running as failed
+// (their in-memory worker did not survive a restart).
+func (s *Store) FailStaleRemediations(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE host_remediations SET status='failed', error='interrupted (server restarted)', finished_at=now()
+		 WHERE status IN ('pending','running')`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // GetRemediation returns one remediation run.
 func (s *Store) GetRemediation(ctx context.Context, id uuid.UUID) (*models.HostRemediation, error) {
 	return scanRemediation(s.pool.QueryRow(ctx, `SELECT `+remediationCols+` FROM host_remediations WHERE id=$1`, id))
