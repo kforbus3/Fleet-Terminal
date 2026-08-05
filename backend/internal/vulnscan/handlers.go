@@ -291,7 +291,6 @@ func (h *handler) audit(r *http.Request, action string, detail map[string]any) {
 	})
 }
 
-
 // --- SBOM download ------------------------------------------------------
 
 // writeSBOM serves a stored CycloneDX document as a download.
