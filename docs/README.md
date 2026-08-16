@@ -61,6 +61,35 @@ a deepened **AI assistant** — multi-turn conversation memory, **fleet insights
 and pending package updates; an **app-wide display timezone**; and **per-host
 pending package updates** surfaced in the inventory.
 
+### Enterprise & platform features
+
+These reference docs cover the enterprise capabilities layered on top of core SSH
+brokering:
+
+| Doc | Audience | What it covers |
+|-----|----------|----------------|
+| [access-policies.md](./access-policies.md) | security / admins | Attribute-based access control (ABAC) layered on RBAC to deny connections by context |
+| [automation.md](./automation.md) | integrators / operators | Driving Fleet as code with the Go SDK and the `fleet` CLI |
+| [behavior-analytics.md](./behavior-analytics.md) | security | UEBA: explainable, ML-free detection of access patterns deviating from a user's baseline |
+| [database-broker.md](./database-broker.md) | operators / security | Brokered privileged access to databases with vaulted credentials, run through the jump host |
+| [kubernetes.md](./kubernetes.md) | operators / security | Brokered Kubernetes access via an authenticating proxy with a vaulted bearer token |
+| [external-secrets.md](./external-secrets.md) | operators / security | External-backed vault credentials fetched on demand from your secrets manager |
+| [kms.md](./kms.md) | operators / security | Protecting the master key with an external KMS / HSM |
+| [itsm.md](./itsm.md) | operators / admins | ITSM integration (ServiceNow / Jira): open change/incident tickets for JIT access |
+| [federation.md](./federation.md) | operators | Multi-site federation: a hub managing many independent site instances |
+| [high-availability.md](./high-availability.md) | operators | Running multiple backends behind a load balancer for redundancy and rolling upgrades |
+
+### Design & planning records
+
+Design records for larger features — kept for history; check the status line at the
+top of each for what has shipped:
+
+| Doc | What it covers |
+|-----|----------------|
+| [fips-mode-plan.md](./fips-mode-plan.md) | FIPS mode design & migration (opt-in, P0–P4 shipped) |
+| [multi-tenancy-plan.md](./multi-tenancy-plan.md) | MSP row-level multi-tenancy design & phased plan (P0–P1 shipped) |
+| [windows-thirdparty-cve-plan.md](./windows-thirdparty-cve-plan.md) | Windows third-party application CVE coverage (shipped, v0.23.x) |
+
 ## Key make targets
 
 Run `make help` for the full list. Highlights: `make up` (full stack + test

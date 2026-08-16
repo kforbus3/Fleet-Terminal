@@ -73,6 +73,7 @@ import (
 	princ "github.com/fleet-terminal/backend/internal/principals"
 	"github.com/fleet-terminal/backend/internal/ratelimit"
 	"github.com/fleet-terminal/backend/internal/rdp"
+	"github.com/fleet-terminal/backend/internal/recorder"
 	"github.com/fleet-terminal/backend/internal/reports"
 	"github.com/fleet-terminal/backend/internal/reportsched"
 	"github.com/fleet-terminal/backend/internal/scan"
@@ -267,7 +268,8 @@ func NewServer(cfg *config.Config, db *pgxpool.Pool, log *slog.Logger, version s
 	s.digest = digest.New(st, s.insights, s.Notify, log)
 	s.reportSched = reportsched.New(st, s.Notify, log)
 	s.rotator = credvault.NewRotator(st, gateway, cfg, log, s.Notify)
-	st.SetAuditSink(s.auditFwd.Forward) // forward audit events to syslog/SIEM when enabled
+	st.SetAuditSink(s.auditFwd.Forward)     // forward audit events to syslog/SIEM when enabled
+	store.SetAuditHMACKey(cfg.AuditHMACKey) // key the audit-integrity chain so it is tamper-evident
 
 	// On login, mint an ephemeral SSH identity bound to the session; on logout,
 	// zeroize the key and revoke its certificates.
@@ -701,7 +703,7 @@ func (s *Server) indexSessionCommands(ctx context.Context) {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(s.Cfg.RecordingDir, p)
 		}
-		f, oerr := os.Open(p)
+		f, oerr := recorder.Open(p, s.Cfg.RecordingEncryptionKey)
 		if oerr != nil {
 			_ = s.Store.IndexRecordingCommands(ctx, rec.RecordingID, rec.SSHSessionID, nil)
 			continue
@@ -947,7 +949,9 @@ func (s *Server) buildRouter() chi.Router {
 
 	r.Use(middleware.RequestID)
 	r.Use(realIP(s.Cfg.TrustedProxies)) // trusted-proxy-aware; not chi's spoofable RealIP
-	r.Use(securityHeaders)
+	// HSTS only where the deployment actually serves over TLS (secure cookies are the
+	// same signal), so a plaintext dev server isn't pinned to HTTPS.
+	r.Use(securityHeaders(s.Cfg.CookieSecure))
 	r.Use(s.recoverer)
 	r.Use(s.metricsMW)
 	r.Use(middleware.Timeout(60 * time.Second))
@@ -968,7 +972,12 @@ func (s *Server) buildRouter() chi.Router {
 	r.Get("/health", s.handleHealth)
 	r.Get("/ready", s.handleReady)
 	r.Get("/version", s.handleVersion)
-	r.Handle("/metrics", promhttp.Handler())
+	// /metrics exposes operational counters (no secrets), and is very commonly
+	// scraped by an in-cluster/sidecar Prometheus, so the default stays open to avoid
+	// breaking those deployments. When TrustedProxies is configured, tighten it to
+	// loopback + those networks — the same set already trusted to front the API — so
+	// an internet-exposed instance does not hand its metrics to anyone who asks.
+	r.With(metricsGuard(s.Cfg.TrustedProxies)).Handle("/metrics", promhttp.Handler())
 
 	// Per-IP rate limiting (defends against bots/abuse when internet-exposed).
 	// A stricter limit guards the unauthenticated auth/bootstrap endpoints; a
@@ -995,6 +1004,10 @@ func (s *Server) buildRouter() chi.Router {
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(rateLimitMW)
 		api.Use(bodyLimitMW)
+		// Double-submit CSRF for cookie-authenticated, state-changing requests
+		// (bearer-token API calls are exempt — see csrfProtect). Protects the
+		// cookie-authenticated /auth/refresh route in particular.
+		api.Use(csrfProtect)
 		if s.Standby {
 			// Read-only DR standby: only the break-glass console, nothing that writes.
 			dr.MountStandby(api, &app.Deps{Store: s.Store, Cfg: s.Cfg, Log: s.Log}, s.Cfg.DRStandbyToken)

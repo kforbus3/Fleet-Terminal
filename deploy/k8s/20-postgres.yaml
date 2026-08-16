@@ -50,6 +50,13 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
+          # The backend HPA scales to 10 replicas × FLEET_DB_MAX_CONNS (20) = 200
+          # connections, plus a couple per replica for the HA leader lock / event
+          # backplane — far past the stock max_connections=100. Raise it (300 leaves
+          # headroom for fleetctl/psql). Each connection also costs RAM, so keep the
+          # memory limit below in step. For real HA, point the backend at an external
+          # pooled Postgres (PgBouncer/Patroni/CloudNativePG) instead of this single pod.
+          args: ["postgres", "-c", "max_connections=300"]
           ports:
             - name: postgres
               containerPort: 5432

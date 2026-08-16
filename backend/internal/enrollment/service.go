@@ -403,6 +403,19 @@ func (s *Service) Enroll(ctx context.Context, sessionID uuid.UUID, host *models.
 			s.retirePreviousOverlay(ctx, effOverlay, host, wgIP, priv, jumpClient, step)
 		}
 	} else if !params.SkipWireGuard {
+		// Fail closed on peer isolation: when isolation is required, the host end is
+		// enforced by pinning AllowedIPs to the jump host alone (jumpIP/32). If the jump
+		// IP is not a usable address, hostAllowedIPs would silently widen AllowedIPs to
+		// the whole overlay subnet — leaving the host reachable by every sibling with
+		// only the jump-side deny (itself best-effort) standing between them. Refuse the
+		// enrollment rather than provision a host that isolation was supposed to protect.
+		if s.cfg.OverlayPeerIsolation && net.ParseIP(strings.TrimSpace(s.cfg.WGJumpIP)) == nil {
+			return fail("configure_host_wireguard", fmt.Errorf(
+				"overlay peer isolation is enabled but the jump host's overlay address (FLEET_WG_JUMP_IP=%q) is "+
+					"not a valid IP, so per-host isolation (AllowedIPs=<jump>/32) cannot be applied; refusing to "+
+					"enroll a host that would be reachable by every other host over the overlay", s.cfg.WGJumpIP))
+		}
+
 		// A host arriving from a certificate overlay is renumbered onto WireGuard's
 		// own pool here, the mirror of the cert-overlay branch above.
 		wgIP, err = s.assignOverlayAddress(ctx, host, s.plan("wireguard"))

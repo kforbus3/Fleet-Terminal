@@ -35,6 +35,9 @@ func (h *Handler) Mount(r chi.Router) {
 		gr.Get("/auth/oidc/status", h.oidcStatus)
 		gr.Get("/auth/oidc/login", h.oidcLogin)
 		gr.Get("/auth/oidc/callback", h.oidcCallback)
+		// RP-initiated logout: clears the Fleet session and, when the IdP advertises
+		// an end_session_endpoint, bounces the browser through it.
+		gr.Get("/auth/oidc/logout", h.oidcLogout)
 		// SAML SSO (public: SP-initiated redirect, IdP-initiated ACS POST, SP metadata,
 		// and the login-page status probe). The ACS handles both flows.
 		gr.Get("/auth/saml/status", h.samlStatus)

@@ -176,7 +176,11 @@ func (s *Service) assignOverlayAddress(ctx context.Context, host *models.Host, p
 		}
 		return cur, nil
 	}
-	next, err := s.store.NextFreeWGAddress(ctx, p.JumpIP)
+	// Allocate from the plan's actual subnet (not a hardcoded /24) and reserve
+	// atomically: ReserveWGAddress picks and assigns under an advisory lock in one
+	// transaction, so two concurrent enrollments (or replicas) can never hand out
+	// the same overlay address.
+	next, err := s.store.ReserveWGAddress(ctx, host.ID, p.JumpIP, p.Subnet)
 	if err != nil {
 		return "", fmt.Errorf("assign an address on the %s overlay (%s): %w", p.Name, p.Subnet, err)
 	}

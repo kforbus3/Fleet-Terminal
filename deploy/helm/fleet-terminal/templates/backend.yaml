@@ -56,6 +56,9 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      # Must exceed FLEET_SHUTDOWN_TIMEOUT so live SSH/terminal/RDP sessions drain on
+      # SIGTERM before SIGKILL (the preStop sleep is part of this budget).
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -67,6 +70,14 @@ spec:
         - name: backend
           image: {{ include "fleet-terminal.backend.image" . | quote }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          {{- if gt (int .Values.backend.preStopSleepSeconds) 0 }}
+          # Let Service endpoints deregister before the container is signalled, so no
+          # new request/session is routed here mid-shutdown (native sleep action).
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ int .Values.backend.preStopSleepSeconds }}
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -107,35 +118,48 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: recordings
+            # Shared state as subPaths of one volume. With replicas>1 / autoscaling this
+            # must be ReadWriteMany (backend.persistence.accessMode) or recording replay
+            # and retention pruning break across pods.
+            - name: fleet-data
               mountPath: {{ .Values.config.FLEET_RECORDING_DIR | quote }}
+              subPath: recordings
+            - name: fleet-data
+              mountPath: {{ .Values.config.FLEET_SCAN_DIR | quote }}
+              subPath: scans
+            - name: fleet-data
+              mountPath: {{ .Values.config.FLEET_BACKUP_DIR | quote }}
+              subPath: backups
+            - name: fleet-data
+              mountPath: {{ .Values.config.FLEET_UPDATES_DIR | quote }}
+              subPath: updates
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: recordings
-          {{- if .Values.backend.recordings.persistence.enabled }}
+        - name: fleet-data
+          {{- if .Values.backend.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "fleet-terminal.backend.fullname" . }}-recordings
+            claimName: {{ include "fleet-terminal.backend.fullname" . }}-data
           {{- else }}
           emptyDir: {}
           {{- end }}
-{{- if .Values.backend.recordings.persistence.enabled }}
+{{- if .Values.backend.persistence.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "fleet-terminal.backend.fullname" . }}-recordings
+  name: {{ include "fleet-terminal.backend.fullname" . }}-data
   labels:
     {{- include "fleet-terminal.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  accessModes: ["ReadWriteOnce"]
-  {{- if .Values.backend.recordings.persistence.storageClass }}
-  storageClassName: {{ .Values.backend.recordings.persistence.storageClass | quote }}
+  accessModes: [{{ .Values.backend.persistence.accessMode | quote }}]
+  {{- if .Values.backend.persistence.storageClass }}
+  storageClassName: {{ .Values.backend.persistence.storageClass | quote }}
   {{- end }}
   resources:
     requests:
-      storage: {{ .Values.backend.recordings.persistence.size | quote }}
+      storage: {{ .Values.backend.persistence.size | quote }}
 {{- end }}
 {{- if .Values.backend.autoscaling.enabled }}
 ---

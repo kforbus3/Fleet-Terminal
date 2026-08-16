@@ -105,6 +105,11 @@ func (s *Service) post(ctx context.Context, path, content string) (*CheckResult,
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Same shared-secret gate the runner enforces on /run applies to its check
+	// endpoints (they spawn ansible subprocesses too). Empty token = dev/back-compat.
+	if s.cfg.AnsibleRunnerToken != "" {
+		req.Header.Set("X-Runner-Token", s.cfg.AnsibleRunnerToken)
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ansible runner unreachable: %w", err)

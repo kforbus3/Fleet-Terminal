@@ -49,6 +49,8 @@ spec:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
           imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          # Sized for (backend replicas × FLEET_DB_MAX_CONNS) + HA overhead; see values.
+          args: ["postgres", "-c", "max_connections={{ .Values.postgres.maxConnections }}"]
           ports:
             - name: postgres
               containerPort: 5432

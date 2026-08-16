@@ -472,7 +472,7 @@ func (h *handler) nextWG(w http.ResponseWriter, r *http.Request) {
 	next := map[string]string{}
 	exhausted := map[string]bool{}
 	for _, p := range plans {
-		addr, err := h.d.Store.NextFreeWGAddress(r.Context(), p.JumpIP)
+		addr, err := h.d.Store.NextFreeWGAddress(r.Context(), p.JumpIP, p.Subnet)
 		if err != nil {
 			exhausted[p.Name] = true
 			continue
@@ -559,14 +559,49 @@ func (h *handler) validateVaultAuth(r *http.Request, rq hostReq) string {
 	return ""
 }
 
-// validHostname rejects control characters (CR/LF etc.), which have no place in a
-// hostname and would otherwise be carried into notification email headers.
+// validHostname restricts a hostname to a strict allowlist — letters, digits, dot,
+// hyphen and underscore. This is a defense against inventory/ssh_config injection on
+// the Ansible runner (H4): the hostname is written as the inventory alias (the first
+// INI token) and as an SSH principal, so a value carrying a space, quote or '=' —
+// e.g. `h ansible_ssh_common_args='-o ProxyCommand=touch /tmp/pwned'` — would inject
+// an Ansible variable and reach code execution on the runner. The allowlist also
+// keeps control characters (CR/LF) out of notification email headers. Empty is
+// rejected (a host needs a name); the length cap keeps it a plausible DNS name.
 func validHostname(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_':
+			// allowed
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validAddress restricts a host's network address (its management Address or overlay
+// WGAddress) to a strict allowlist — letters, digits, dot, hyphen, underscore and
+// colon (colon so IPv6 literals are accepted). Like validHostname it blocks spaces,
+// quotes and '=' so a crafted address cannot inject Ansible variables or ssh options
+// when the runner writes it into the inventory (ansible_host=...) or ssh_config
+// (HostName/Host ...). Empty is allowed: a host may be reachable by hostname alone.
+func validAddress(s string) bool {
+	if s == "" {
+		return true
+	}
 	if len(s) > 253 {
 		return false
 	}
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_', r == ':':
+			// allowed
+		default:
 			return false
 		}
 	}
@@ -607,6 +642,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "hostname contains invalid characters")
 		return
 	}
+	if !validAddress(rq.Address) {
+		httpx.WriteError(w, http.StatusBadRequest, "address contains invalid characters")
+		return
+	}
+	if !validAddress(rq.WGAddress) {
+		httpx.WriteError(w, http.StatusBadRequest, "wgAddress contains invalid characters")
+		return
+	}
 	if !validSSHUser(rq.SSHUser) {
 		httpx.WriteError(w, http.StatusBadRequest, "sshUser must be a valid login name ([a-z_][a-z0-9_-]*)")
 		return
@@ -637,6 +680,14 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validHostname(rq.Hostname) {
 		httpx.WriteError(w, http.StatusBadRequest, "hostname contains invalid characters")
+		return
+	}
+	if !validAddress(rq.Address) {
+		httpx.WriteError(w, http.StatusBadRequest, "address contains invalid characters")
+		return
+	}
+	if !validAddress(rq.WGAddress) {
+		httpx.WriteError(w, http.StatusBadRequest, "wgAddress contains invalid characters")
 		return
 	}
 	if !validSSHUser(rq.SSHUser) {

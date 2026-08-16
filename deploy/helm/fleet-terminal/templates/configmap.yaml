@@ -10,3 +10,9 @@ data:
   {{ $key }}: {{ $value | quote }}
   {{- end }}
   FLEET_REDIS_URL: {{ include "fleet-terminal.redisUrl" . | quote }}
+  {{- if .Values.ansibleRunner.enabled }}
+  FLEET_ANSIBLE_RUNNER_URL: {{ printf "http://%s:8000" (include "fleet-terminal.ansibleRunner.fullname" .) | quote }}
+  {{- end }}
+  {{- if .Values.grypeScanner.enabled }}
+  FLEET_GRYPE_SCANNER_URL: {{ printf "http://%s:8000" (include "fleet-terminal.grypeScanner.fullname" .) | quote }}
+  {{- end }}

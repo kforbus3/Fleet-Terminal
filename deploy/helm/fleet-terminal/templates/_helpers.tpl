@@ -70,6 +70,14 @@ Resource name helpers per component.
 {{- printf "%s-redis" (include "fleet-terminal.fullname" .) -}}
 {{- end -}}
 
+{{- define "fleet-terminal.ansibleRunner.fullname" -}}
+{{- printf "%s-ansible-runner" (include "fleet-terminal.fullname" .) -}}
+{{- end -}}
+
+{{- define "fleet-terminal.grypeScanner.fullname" -}}
+{{- printf "%s-grype-scanner" (include "fleet-terminal.fullname" .) -}}
+{{- end -}}
+
 {{/*
 Name of the Secret holding sensitive config.
 */}}

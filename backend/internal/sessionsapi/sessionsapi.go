@@ -18,6 +18,7 @@ import (
 	"github.com/fleet-terminal/backend/internal/auth"
 	"github.com/fleet-terminal/backend/internal/httpx"
 	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/fleet-terminal/backend/internal/recorder"
 	"github.com/fleet-terminal/backend/internal/store"
 )
 
@@ -119,7 +120,7 @@ func (h *handler) recording(w http.ResponseWriter, r *http.Request) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(h.d.Cfg.RecordingDir, path)
 	}
-	cast, err := os.ReadFile(path)
+	cast, err := recorder.ReadFile(path, h.d.Cfg.RecordingEncryptionKey)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "recording file not found")
 		return
@@ -139,7 +140,7 @@ func (h *handler) downloadRecording(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "recording not found")
 		return
 	}
-	f, err := os.Open(h.resolvePath(rec.Path))
+	f, err := recorder.Open(h.resolvePath(rec.Path), h.d.Cfg.RecordingEncryptionKey)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "recording file not found")
 		return
@@ -163,7 +164,7 @@ func (h *handler) playerRecording(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "recording not found")
 		return
 	}
-	cast, err := os.ReadFile(h.resolvePath(rec.Path))
+	cast, err := recorder.ReadFile(h.resolvePath(rec.Path), h.d.Cfg.RecordingEncryptionKey)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "recording file not found")
 		return
