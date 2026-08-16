@@ -2,8 +2,10 @@
 
 **Browser-based Privileged Access Management (PAM) for Linux fleets.**
 
-Fleet Terminal gives operators secure, audited SSH access to hundreds or thousands of
-Linux hosts **from the browser** — with no SSH client, VPN, WireGuard, keys, or
+Fleet Terminal gives operators secure, audited SSH access to Linux fleets **from the
+browser** — hundreds of hosts on the default configuration, scaling to thousands with a
+wider overlay subnet (`FLEET_WG_SUBNET`) and tuned monitor concurrency — with no SSH
+client, VPN, WireGuard, keys, or
 certificates on the user side. The browser talks only to the backend over HTTPS/WebSocket;
 the **backend is the sole SSH client** and brokers every connection through a jump host and
 WireGuard overlay to managed hosts.
