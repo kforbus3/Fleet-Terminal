@@ -56,6 +56,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "fleet-terminal.secretName" . }}
                   key: FLEET_ANSIBLE_RUNNER_TOKEN
+            # HOME on the writable emptyDir so Ansible's ~/.ansible tmp/collection cache
+            # and ansible-lint's ~/.cache work with the read-only root fs.
+            - name: HOME
+              value: /home/runner
           readinessProbe:
             httpGet:
               path: /healthz
@@ -74,8 +78,19 @@ spec:
             {{- toYaml .Values.ansibleRunner.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
-            # Ansible writes temp/collection files under HOME; keep the root fs writable.
-            readOnlyRootFilesystem: false
+            # Immutable root fs; Ansible writes temp/collection files under HOME and
+            # scratch playbooks under /tmp, mounted as writable emptyDir volumes below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: home
+              mountPath: /home/runner
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 {{- end }}

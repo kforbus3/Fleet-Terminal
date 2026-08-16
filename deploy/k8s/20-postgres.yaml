@@ -94,12 +94,24 @@ spec:
               memory: "1Gi"
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Immutable root fs. The database lives on the PVC (mounted at PGDATA); the
+            # official image only additionally needs a writable unix-socket dir and /tmp
+            # (used by the bootstrap postmaster during initdb) — both emptyDir below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

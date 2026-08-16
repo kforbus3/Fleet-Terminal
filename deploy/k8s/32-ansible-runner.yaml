@@ -59,6 +59,10 @@ spec:
                 secretKeyRef:
                   name: fleet-secrets
                   key: FLEET_ANSIBLE_RUNNER_TOKEN
+            # Point HOME at the writable emptyDir so Ansible's ~/.ansible tmp/collection
+            # cache and ansible-lint's ~/.cache land on a writable mount (root fs is RO).
+            - name: HOME
+              value: /home/runner
           readinessProbe:
             httpGet:
               path: /healthz
@@ -82,8 +86,19 @@ spec:
               memory: "512Mi"
           securityContext:
             allowPrivilegeEscalation: false
-            # The runner writes Ansible temp/collection files under HOME, so its root
-            # filesystem stays writable (it still drops all caps and runs unprivileged).
-            readOnlyRootFilesystem: false
+            # Immutable root fs. The runner still needs to write Ansible temp/collection
+            # files under HOME and scratch playbooks under /tmp, so both are mounted as
+            # writable emptyDir volumes below (it drops all caps and runs unprivileged).
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: home
+              mountPath: /home/runner
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

@@ -59,6 +59,10 @@ spec:
               value: {{ .Values.grypeScanner.scanTimeout | quote }}
             - name: GRYPE_DB_TIMEOUT
               value: {{ .Values.grypeScanner.dbTimeout | quote }}
+            # syft/grype scratch extraction goes to the /tmp emptyDir (root fs is RO;
+            # the vuln DB stays on the PVC).
+            - name: TMPDIR
+              value: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -77,12 +81,16 @@ spec:
             {{- toYaml .Values.grypeScanner.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Immutable root fs; the vuln DB persists on the PVC and syft scratch space
+            # goes to the /tmp emptyDir (TMPDIR above).
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: grype-db
               mountPath: /home/scanner/.cache/grype
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: grype-db
           {{- if .Values.grypeScanner.persistence.enabled }}
@@ -91,6 +99,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: tmp
+          emptyDir: {}
 {{- if .Values.grypeScanner.persistence.enabled }}
 ---
 apiVersion: v1
