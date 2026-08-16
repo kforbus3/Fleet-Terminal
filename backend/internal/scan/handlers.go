@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -149,7 +150,7 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create scan")
 		return
 	}
-	go h.svc.Run(rec.ID, host, rq.Profile, skipRules)
+	go h.svc.Run(context.WithoutCancel(r.Context()), rec.ID, host, rq.Profile, skipRules)
 
 	h.audit(r, "host.scan", rec.ID.String(), map[string]any{
 		"hostId": host.ID, "hostname": host.Hostname, "profile": rq.Profile, "skipped": len(skipRules),
@@ -376,7 +377,7 @@ func (h *handler) remediate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not start remediation")
 		return
 	}
-	go h.svc.Remediate(rec.ID, scan, host, rq.RuleIDs, &p.UserID, p.Username)
+	go h.svc.Remediate(context.WithoutCancel(r.Context()), rec.ID, scan, host, rq.RuleIDs, &p.UserID, p.Username)
 	h.audit(r, "host.remediate", rec.ID.String(), map[string]any{
 		"hostId": host.ID, "hostname": host.Hostname, "rules": rq.RuleIDs,
 		"accessImpacting": impacting, "controlPlane": isControlPlaneHost(host, h.d.Cfg),

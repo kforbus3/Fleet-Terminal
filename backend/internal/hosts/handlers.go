@@ -788,7 +788,7 @@ func (h *handler) del(w http.ResponseWriter, r *http.Request) {
 			cancel()
 		} else {
 			go func(hst models.Host) {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 				defer cancel()
 				if err := h.d.CleanupHostOverlay(ctx, &hst); err != nil {
 					h.d.Log.Warn("cleanup host overlay after host delete",

@@ -1,6 +1,7 @@
 package playbook
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -328,7 +329,7 @@ func (h *handler) run(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create run")
 		return
 	}
-	go h.svc.Run(rec.ID, pb.Content, hosts, rq.CheckMode)
+	go h.svc.Run(context.WithoutCancel(r.Context()), rec.ID, pb.Content, hosts, rq.CheckMode)
 
 	names := make([]string, 0, len(hosts))
 	for _, hh := range hosts {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -16,9 +17,22 @@ import (
 	saml2 "github.com/russellhaering/gosaml2"
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/google/uuid"
+
 	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/fleet-terminal/backend/internal/secretbox"
 	"github.com/fleet-terminal/backend/internal/store"
 )
+
+// samlLogoutStatusSuccess is the SAML top-level status the SP returns to an
+// IdP-initiated LogoutRequest once the local Fleet session has been terminated.
+const samlLogoutStatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
+
+// samlNameIDFormatUnspecified is the NameID Format asserted on SP-built
+// LogoutRequests. The ACS does not surface the Format the IdP originally used,
+// so we send "unspecified"; most IdPs treat SLO NameID matching leniently, and
+// the local session is torn down regardless of whether the IdP accepts it.
+const samlNameIDFormatUnspecified = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
 
 const samlSettingKey = "saml"
 
@@ -68,14 +82,21 @@ var samlReplayCache = newAssertionReplayCache(samlAssertionTTL)
 
 // samlConfig is the persisted SAML 2.0 Service Provider configuration. The IdP
 // certificate is a public signing certificate (used to verify assertion
-// signatures), so nothing here is secret — no secretbox sealing is needed.
+// signatures) and most fields are non-secret, but the SP signing private key IS
+// secret: it is supplied via SPPrivateKey (write-only) and persisted encrypted in
+// SPPrivateKeyEnc — the plaintext is never stored or echoed back.
 type samlConfig struct {
 	Enabled         bool              `json:"enabled"`
-	IdPEntityID     string            `json:"idpEntityId"`    // IdP issuer/entity ID
-	IdPSSOURL       string            `json:"idpSsoUrl"`      // IdP SSO (redirect binding) URL
-	IdPCertificate  string            `json:"idpCertificate"` // PEM (or base64 DER) signing cert
-	SPEntityID      string            `json:"spEntityId"`     // our entity ID (audience); defaults to the metadata URL
-	UsernameAttr    string            `json:"usernameAttr"`   // empty = use the assertion NameID
+	IdPEntityID     string            `json:"idpEntityId"`               // IdP issuer/entity ID
+	IdPSSOURL       string            `json:"idpSsoUrl"`                 // IdP SSO (redirect binding) URL
+	IdPCertificate  string            `json:"idpCertificate"`            // PEM (or base64 DER) signing cert
+	IdPSLOURL       string            `json:"idpSloUrl"`                 // IdP Single Logout endpoint ("" disables SLO)
+	IdPSLOBinding   string            `json:"idpSloBinding"`             // "redirect" (default) or "post"; informational
+	SPEntityID      string            `json:"spEntityId"`                // our entity ID (audience); defaults to the metadata URL
+	SPCertificate   string            `json:"spCertificate"`             // PEM SP signing cert (public; published in metadata)
+	SPPrivateKey    string            `json:"spPrivateKey,omitempty"`    // write-only: PEM PKCS1/PKCS8/SEC1 signing key
+	SPPrivateKeyEnc string            `json:"spPrivateKeyEnc,omitempty"` // stored, secretbox-sealed
+	UsernameAttr    string            `json:"usernameAttr"`              // empty = use the assertion NameID
 	EmailAttr       string            `json:"emailAttr"`
 	DisplayNameAttr string            `json:"displayNameAttr"`
 	GroupsAttr      string            `json:"groupsAttr"`
@@ -107,6 +128,75 @@ func (h *Handler) spEntityID(c samlConfig) string {
 
 func (h *Handler) samlACSURL() string {
 	return strings.TrimRight(h.svc.cfg.PublicURL, "/") + "/api/v1/auth/saml/acs"
+}
+
+// samlSLOURL is the SP's Single Logout service endpoint (where the IdP delivers
+// LogoutResponses to our requests, and IdP-initiated LogoutRequests).
+func (h *Handler) samlSLOURL() string {
+	return strings.TrimRight(h.svc.cfg.PublicURL, "/") + "/api/v1/auth/saml/slo"
+}
+
+// spPrivateKey returns the decrypted SP signing private key PEM, or "" when none
+// is configured (or it cannot be unsealed). The plaintext is never logged.
+func (h *Handler) spPrivateKey(c samlConfig) string {
+	if c.SPPrivateKeyEnc == "" {
+		return ""
+	}
+	s, err := secretbox.Open(h.svc.cfg.CAKeyPassphrase, c.SPPrivateKeyEnc)
+	if err != nil {
+		return ""
+	}
+	return string(s)
+}
+
+// parseSPPrivateKey accepts a PEM PKCS#1 (RSA), PKCS#8, or SEC1 (EC) private key
+// and returns it as a crypto.Signer for XML-DSig signing.
+func parseSPPrivateKey(keyPEM string) (crypto.Signer, error) {
+	block, _ := pem.Decode([]byte(strings.TrimSpace(keyPEM)))
+	if block == nil {
+		return nil, errors.New("SP private key is not valid PEM")
+	}
+	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return k, nil
+	}
+	if k, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		if s, ok := k.(crypto.Signer); ok {
+			return s, nil
+		}
+		return nil, errors.New("SP private key type is not a signer")
+	}
+	if k, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return k, nil
+	}
+	return nil, errors.New("SP private key is not PKCS#1, PKCS#8, or SEC1 PEM")
+}
+
+// parseSPKeyPair builds a gosaml2 signing key store from the SP private key and
+// certificate PEMs. Both are required.
+func parseSPKeyPair(keyPEM, certPEM string) (*saml2.KeyStore, error) {
+	if strings.TrimSpace(keyPEM) == "" || strings.TrimSpace(certPEM) == "" {
+		return nil, errors.New("SP signing key and certificate are both required")
+	}
+	signer, err := parseSPPrivateKey(keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := parseIDPCert(certPEM) // parses a PEM/base64-DER X.509 cert
+	if err != nil {
+		return nil, errors.New("SP certificate is not valid PEM or base64 DER")
+	}
+	return &saml2.KeyStore{Signer: signer, Cert: cert.Raw}, nil
+}
+
+// spSigningKeyStore returns the configured SP signing key store, or (nil, nil)
+// when no SP key is configured (metadata + unsigned requests still work). A
+// configured-but-invalid key pair returns an error.
+func (h *Handler) spSigningKeyStore(c samlConfig) (*saml2.KeyStore, error) {
+	priv := h.spPrivateKey(c)
+	if priv == "" || strings.TrimSpace(c.SPCertificate) == "" {
+		return nil, nil
+	}
+	return parseSPKeyPair(priv, c.SPCertificate)
 }
 
 // parseIDPCert accepts a PEM certificate or a bare base64 DER blob and returns
@@ -147,28 +237,36 @@ func (h *Handler) samlSP(c samlConfig) (*saml2.SAMLServiceProvider, error) {
 	sp := &saml2.SAMLServiceProvider{
 		IdentityProviderSSOURL:      c.IdPSSOURL,
 		IdentityProviderIssuer:      c.IdPEntityID,
+		IdentityProviderSLOURL:      c.IdPSLOURL,
 		ServiceProviderIssuer:       spID,
 		AssertionConsumerServiceURL: h.samlACSURL(),
+		ServiceProviderSLOURL:       h.samlSLOURL(),
 		AudienceURI:                 spID,
 		IDPCertificateStore:         certStore,
+		NameIdFormat:                samlNameIDFormatUnspecified,
 	}
-	// Sign AuthnRequests whenever an SP signing key is configured. Signing an
-	// AuthnRequest requires the SP to hold a private key; this SP has no key-store
-	// configuration surface yet (the config carries only the IdP's public signing
-	// cert), so no key is ever present and requests stay unsigned — but the moment a
-	// key store is wired in, requests sign automatically instead of silently staying
-	// unsigned. The ACS always requires the assertion itself to be IdP-signed, which
-	// is the security-critical direction.
-	sp.SignAuthnRequests = sp.SPSigningKeyStore != nil || sp.SPKeyStore != nil
-
-	// Single Logout (SLO) is intentionally not implemented. A standards-compliant SP
-	// SLO flow requires (1) an SP signing key to sign LogoutRequests/Responses — most
-	// IdPs reject unsigned SLO messages — which this SP has no configuration surface
-	// for, and (2) IdP SLO endpoint/binding config plus a signed-LogoutResponse
-	// handler. Shipping a half-built SLO that silently no-ops at real IdPs is worse
-	// than its documented absence; /auth/logout (and OIDC RP-initiated logout) end
-	// the local Fleet session. Revisit once an SP key store exists. See report.
+	// Load the SP signing key store when one is configured. With a key present the
+	// SP signs AuthnRequests and SLO LogoutRequests/Responses; without one, metadata
+	// generation and unsigned AuthnRequests still work. The ACS always requires the
+	// assertion itself to be IdP-signed, which is the security-critical direction.
+	ks, err := h.spSigningKeyStore(c)
+	if err != nil {
+		return nil, err
+	}
+	if ks != nil {
+		if err := sp.SetSPSigningKeyStore(ks); err != nil {
+			return nil, err
+		}
+		sp.SignAuthnRequests = true
+	}
 	return sp, nil
+}
+
+// samlSPCanSign reports whether the SP holds a signing key. Signed SLO is only
+// attempted when this is true (most IdPs reject unsigned logout messages); it is
+// derived from SignAuthnRequests, which samlSP sets together with the key store.
+func samlSPCanSign(sp *saml2.SAMLServiceProvider) bool {
+	return sp.SignAuthnRequests
 }
 
 // samlStatus is public: the login page calls it to decide whether to show the
@@ -276,6 +374,10 @@ func (h *Handler) samlACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.setAuthCookies(w, tokens)
+	// Remember the IdP's subject NameID + SessionIndex so an SP-initiated logout can
+	// build a matching LogoutRequest later (the Fleet session table doesn't carry
+	// SAML identifiers, and this stays entirely within the auth package).
+	h.setSAMLLogoutCookies(w, info.NameID, info.SessionIndex)
 	_ = h.svc.store.RecordAuthEvent(ctx, models.AuthEvent{
 		UserID: &user.ID, Username: user.Username, Event: "login_success", IP: ip, UserAgent: ua,
 		Detail: map[string]any{"method": "saml"},
@@ -285,6 +387,129 @@ func (h *Handler) samlACS(w http.ResponseWriter, r *http.Request) {
 		Detail: map[string]any{"method": "saml"},
 	})
 	http.Redirect(w, r, samlRelay(r.FormValue("RelayState")), http.StatusFound)
+}
+
+// setSAMLLogoutCookies records the SAML subject NameID and SessionIndex from a
+// successful login so a later SP-initiated logout can reference them. They are
+// scoped to /api/v1/auth (like the session cookies) and SameSite=Lax so a
+// same-site top-level navigation to the logout endpoint still carries them.
+func (h *Handler) setSAMLLogoutCookies(w http.ResponseWriter, nameID, sessionIndex string) {
+	if nameID == "" {
+		return
+	}
+	exp := time.Now().Add(h.svc.cfg.RefreshTokenTTL)
+	for _, ck := range []struct{ name, val string }{
+		{"saml_nameid", nameID},
+		{"saml_sessidx", sessionIndex},
+	} {
+		//nolint:gosec // SAML SLO cookie: SameSite=Lax is required so it survives the IdP-initiated top-level logout navigation; HttpOnly set, Secure deployment-controlled.
+		http.SetCookie(w, &http.Cookie{
+			Name: ck.name, Value: ck.val, Path: "/api/v1/auth", Domain: h.svc.cfg.CookieDomain,
+			HttpOnly: true, Secure: h.svc.cfg.CookieSecure, SameSite: http.SameSiteLaxMode, Expires: exp,
+		})
+	}
+}
+
+func (h *Handler) clearSAMLLogoutCookies(w http.ResponseWriter) {
+	for _, name := range []string{"saml_nameid", "saml_sessidx"} {
+		//nolint:gosec // deletion cookie (MaxAge<0) for the SAML SLO cookies; carries matching HttpOnly/SameSite, Secure deployment-controlled.
+		http.SetCookie(w, &http.Cookie{
+			Name: name, Value: "", Path: "/api/v1/auth", Domain: h.svc.cfg.CookieDomain, MaxAge: -1,
+			HttpOnly: true, Secure: h.svc.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+		})
+	}
+}
+
+// revokeLocalSession best-effort terminates the current Fleet session named by the
+// fleet_sid cookie. Shared by both SLO endpoints: local logout is guaranteed even
+// when the IdP round-trip cannot be completed. Returns the session id string (for
+// audit) if one was present.
+func (h *Handler) revokeLocalSession(ctx context.Context, r *http.Request) {
+	if sc, err := r.Cookie("fleet_sid"); err == nil {
+		if sid, perr := uuid.Parse(sc.Value); perr == nil {
+			_ = h.svc.Logout(ctx, sid)
+		}
+	}
+}
+
+// samlLogout is SP-initiated Single Logout (public browser GET, no Fleet principal
+// in context). It ALWAYS revokes the local Fleet session first; then, when SLO is
+// fully configured (enabled, an IdP SLO endpoint, an SP signing key, and a
+// remembered subject NameID), it builds a signed LogoutRequest and redirects the
+// browser to the IdP's SLO endpoint. Otherwise it falls back to a plain local
+// logout — mirroring how oidcLogout degrades when no end_session_endpoint exists.
+func (h *Handler) samlLogout(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	c := h.samlConfig(ctx)
+
+	h.revokeLocalSession(ctx, r)
+
+	var nameID, sessionIndex string
+	if ck, err := r.Cookie("saml_nameid"); err == nil {
+		nameID = ck.Value
+	}
+	if ck, err := r.Cookie("saml_sessidx"); err == nil {
+		sessionIndex = ck.Value
+	}
+	h.clearAuthCookies(w)
+	h.clearSAMLLogoutCookies(w)
+
+	// Attempt IdP SLO only when everything needed for a signed LogoutRequest is
+	// present. Any failure past this point degrades to local-only logout.
+	if c.enabled() && c.IdPSLOURL != "" && nameID != "" {
+		if sp, err := h.samlSP(c); err == nil && samlSPCanSign(sp) {
+			if doc, derr := sp.BuildLogoutRequestDocument(nameID, sessionIndex); derr == nil {
+				if u, uerr := sp.BuildLogoutURLRedirect(samlRelay("/login"), doc); uerr == nil {
+					http.Redirect(w, r, u, http.StatusFound)
+					return
+				}
+			}
+		}
+	}
+	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+// samlSLO is the SP Single Logout service endpoint — the SLO counterpart of the
+// ACS. It handles two IdP messages over the HTTP-Redirect/POST bindings:
+//
+//   - a LogoutResponse (the IdP's reply to our SP-initiated LogoutRequest): the
+//     local session was already ended in samlLogout, so it just lands on /login;
+//   - an IdP-initiated LogoutRequest: it terminates the local Fleet session and,
+//     when an SP signing key is configured, replies with a signed LogoutResponse
+//     redirected back to the IdP.
+//
+// Local logout is guaranteed regardless of the IdP message's validity. NOTE: the
+// session cookies are SameSite=Strict, so a front-channel IdP-initiated request
+// arriving cross-site may not carry fleet_sid; SP-initiated logout (the common
+// path) revokes the session before leaving our origin, so this only affects pure
+// IdP-initiated SLO — a documented limitation of front-channel SLO under Strict.
+func (h *Handler) samlSLO(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	c := h.samlConfig(ctx)
+
+	h.revokeLocalSession(ctx, r)
+	h.clearAuthCookies(w)
+	h.clearSAMLLogoutCookies(w)
+
+	_ = r.ParseForm()
+	// IdP-initiated logout: validate the signed LogoutRequest and answer with a
+	// signed LogoutResponse when we can. Never fail the user's logout on an IdP
+	// message problem — the local session is already gone.
+	if req := r.FormValue("SAMLRequest"); req != "" {
+		if sp, err := h.samlSP(c); err == nil && samlSPCanSign(sp) {
+			if lr, verr := sp.ValidateEncodedLogoutRequestPOST(req); verr == nil {
+				if doc, berr := sp.BuildLogoutResponseDocument(samlLogoutStatusSuccess, lr.ID); berr == nil {
+					if u, uerr := sp.BuildLogoutURLRedirect(samlRelay(r.FormValue("RelayState")), doc); uerr == nil {
+						http.Redirect(w, r, u, http.StatusFound)
+						return
+					}
+				}
+			}
+		}
+	}
+	// A LogoutResponse to our own request (or anything unverifiable): local logout is
+	// already complete, so just return to the login page.
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 // samlMetadata serves the SP metadata XML the IdP needs to register this app.
@@ -310,19 +535,26 @@ func (h *Handler) samlMetadata(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out)
 }
 
-// samlConfigGet returns the admin config. The IdP certificate is public, so
-// nothing is redacted.
+// samlConfigGet returns the admin config. The IdP certificate and SP certificate
+// are public; the SP signing private key is a secret and is never echoed — only a
+// boolean spKeySet flag reports whether one is stored.
 func (h *Handler) samlConfigGet(w http.ResponseWriter, r *http.Request) {
 	c := h.samlConfig(r.Context())
+	spKeySet := c.SPPrivateKeyEnc != ""
+	c.SPPrivateKey, c.SPPrivateKeyEnc = "", ""
 	writeJSON(w, http.StatusOK, map[string]any{
 		"config":      c,
+		"spKeySet":    spKeySet,
 		"acsUrl":      h.samlACSURL(),
+		"sloUrl":      h.samlSLOURL(),
 		"spEntityId":  h.spEntityID(c),
 		"metadataUrl": strings.TrimRight(h.svc.cfg.PublicURL, "/") + "/api/v1/auth/saml/metadata",
 	})
 }
 
-// samlConfigPut saves the config after validating the IdP certificate parses.
+// samlConfigPut saves the config after validating the IdP certificate parses. A
+// newly-supplied SP signing key is validated against the SP certificate and sealed
+// before storage; when omitted, the previously-stored sealed key is preserved.
 func (h *Handler) samlConfigPut(w http.ResponseWriter, r *http.Request) {
 	var c samlConfig
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&c); err != nil {
@@ -335,6 +567,23 @@ func (h *Handler) samlConfigPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	cur := h.samlConfig(r.Context())
+	if c.SPPrivateKey != "" {
+		// Validate the key parses together with the SP certificate before sealing.
+		if _, err := parseSPKeyPair(c.SPPrivateKey, c.SPCertificate); err != nil {
+			writeError(w, http.StatusBadRequest, "SP signing key/certificate invalid: "+err.Error())
+			return
+		}
+		enc, err := secretbox.Seal(h.svc.cfg.CAKeyPassphrase, []byte(c.SPPrivateKey))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not seal SP key")
+			return
+		}
+		c.SPPrivateKeyEnc = enc
+	} else {
+		c.SPPrivateKeyEnc = cur.SPPrivateKeyEnc
+	}
+	c.SPPrivateKey = "" // never persist the plaintext
 	if err := h.svc.store.SetSetting(r.Context(), samlSettingKey, c); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not save settings")
 		return

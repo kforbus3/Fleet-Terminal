@@ -706,7 +706,8 @@ func (o *OpenVPN) endpoint() string {
 func splitEndpoint(endpoint string, defPort int) (string, int) {
 	if h, p, err := net.SplitHostPort(endpoint); err == nil {
 		var port int
-		fmt.Sscanf(p, "%d", &port)
+		// On a parse failure port stays 0 and falls back to defPort just below.
+		_, _ = fmt.Sscanf(p, "%d", &port)
 		if port == 0 {
 			port = defPort
 		}

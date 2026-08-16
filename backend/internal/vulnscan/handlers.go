@@ -166,7 +166,7 @@ func (h *handler) trigger(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ids = append(ids, scanID.String())
-		go h.svc.Run(scanID, host)
+		go h.svc.Run(context.WithoutCancel(r.Context()), scanID, host)
 	}
 	h.audit(r, "vuln_scan.start", map[string]any{"hosts": len(ids)})
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"scanIds": ids})

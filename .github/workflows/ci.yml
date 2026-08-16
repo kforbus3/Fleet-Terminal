@@ -71,10 +71,9 @@ jobs:
   go-lint:
     name: Go lint (golangci-lint)
     runs-on: ubuntu-latest
-    # Non-blocking for now: the ruleset (govet/staticcheck/errcheck/ineffassign/
-    # unused/gosec) has not been verified clean against the whole tree yet, so a
-    # finding should surface without blocking merges. Drop this once green.
-    continue-on-error: true
+    # Blocking: the ruleset (govet/staticcheck/errcheck/ineffassign/unused/gosec)
+    # is verified clean across all three modules. Genuine findings are fixed and
+    # deliberate exceptions are annotated with //nolint + a reason.
     strategy:
       fail-fast: false
       matrix:
@@ -89,12 +88,13 @@ jobs:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # v8 installs golangci-lint v2, which the .golangci.yml files use (v2 schema).
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
           working-directory: ${{ matrix.module }}
-          # Only the backend ships a config; the SDK and provider inherit
-          # golangci-lint's defaults, which is fine for a first pass.
+          # Each module ships its own .golangci.yml (backend: full ruleset incl. gosec;
+          # sdk/provider: defect-focused defaults with test-file exclusions).
           args: --timeout=10m
 
   govulncheck:
@@ -125,9 +125,8 @@ jobs:
   frontend-lint:
     name: Frontend lint (eslint)
     runs-on: ubuntu-latest
-    # Non-blocking for now: eslint is newly wired here and the rule set has not
-    # been run against the whole tree in CI yet. Remove once verified green.
-    continue-on-error: true
+    # Blocking: eslint runs clean (0 errors) across the tree; style items surface
+    # as warnings, real problems as errors.
     defaults:
       run:
         working-directory: frontend

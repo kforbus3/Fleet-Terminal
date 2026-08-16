@@ -446,17 +446,23 @@ func (s *Service) loadPrincipal(ctx context.Context, claims *Claims) (*Principal
 	// idle, or when it exceeds the absolute maximum lifetime (a hard cap that
 	// rolling token refresh cannot extend).
 	if s.cfg.SessionIdleTTL > 0 && time.Since(sess.LastSeenAt) > s.cfg.SessionIdleTTL {
-		s.endSession(ctx, sess.ID)
+		if err := s.endSession(ctx, sess.ID); err != nil {
+			s.log.Warn("end idle session", "session", sess.ID, "err", err)
+		}
 		return nil, ErrSessionInvalid
 	}
 	if s.cfg.SessionAbsoluteTTL > 0 && time.Since(sess.CreatedAt) > s.cfg.SessionAbsoluteTTL {
-		s.endSession(ctx, sess.ID)
+		if err := s.endSession(ctx, sess.ID); err != nil {
+			s.log.Warn("end session past absolute TTL", "session", sess.ID, "err", err)
+		}
 		return nil, ErrSessionInvalid
 	}
 	u, err := s.store.GetUserByID(ctx, claims.UserID)
 	if err != nil || u.IsDisabled {
 		// Disabled/removed account: tear down credentials too.
-		s.endSession(ctx, sess.ID)
+		if derr := s.endSession(ctx, sess.ID); derr != nil {
+			s.log.Warn("end session for disabled account", "session", sess.ID, "err", derr)
+		}
 		return nil, ErrSessionInvalid
 	}
 	perms, err := s.store.UserPermissions(ctx, u.ID)

@@ -141,7 +141,7 @@ func (e *Engine) fireVulnScan(ctx context.Context, sc *models.Schedule, hosts []
 		go func(scanID uuid.UUID, host *models.Host) {
 			e.scanSem <- struct{}{}
 			defer func() { <-e.scanSem }()
-			e.vuln.Run(scanID, host)
+			e.vuln.Run(context.WithoutCancel(ctx), scanID, host)
 		}(id, h)
 	}
 	if len(ids) == 0 {
@@ -192,7 +192,7 @@ func (e *Engine) fireScan(ctx context.Context, sc *models.Schedule, hosts []*mod
 		go func(scanID uuid.UUID, host *models.Host) {
 			e.scanSem <- struct{}{}
 			defer func() { <-e.scanSem }()
-			e.scans.Run(scanID, host, p.Profile, skip)
+			e.scans.Run(context.WithoutCancel(ctx), scanID, host, p.Profile, skip)
 		}(rec.ID, h)
 	}
 	if len(ids) == 0 {
@@ -231,7 +231,7 @@ func (e *Engine) firePlaybook(ctx context.Context, sc *models.Schedule, hosts []
 	if err != nil {
 		return "error: create run", nil
 	}
-	go e.playbook.Run(rec.ID, pb.Content, hosts, p.CheckMode)
+	go e.playbook.Run(context.WithoutCancel(ctx), rec.ID, pb.Content, hosts, p.CheckMode)
 	return "started", []uuid.UUID{rec.ID}
 }
 
@@ -275,6 +275,6 @@ func (e *Engine) fireScript(ctx context.Context, sc *models.Schedule, hosts []*m
 	if err != nil {
 		return "error: create run", nil
 	}
-	go e.winscript.Run(rec.ID, script.Content, winHosts, nil)
+	go e.winscript.Run(context.WithoutCancel(ctx), rec.ID, script.Content, winHosts, nil)
 	return "started", []uuid.UUID{rec.ID}
 }

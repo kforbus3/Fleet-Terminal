@@ -212,22 +212,21 @@ func buildKnownHosts(lookup func(id string) (string, bool), jumpHost string, hos
 // live buffer and persisting the result. It runs in its own goroutine with a
 // fresh (restart-independent) context; the in-memory live buffer does not
 // survive a restart, but FailStalePlaybookRuns reconciles the DB row.
-func (s *Service) Run(runID uuid.UUID, content string, hosts []*models.Host, checkMode bool) {
+func (s *Service) Run(parent context.Context, runID uuid.UUID, content string, hosts []*models.Host, checkMode bool) {
 	timeout := s.runTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	live := &liveRun{}
 	s.live.Store(runID, live)
 	defer s.live.Delete(runID)
 
-	bg := context.Background()
-	if err := s.store.StartPlaybookRun(bg, runID); err != nil {
+	if err := s.store.StartPlaybookRun(ctx, runID); err != nil {
 		s.log.Error("playbook run: mark running", "err", err)
 	}
 
 	fail := func(msg string) {
-		fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		fctx, fcancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 		defer fcancel()
 		out := live.snapshot()
 		if out != "" {
@@ -264,7 +263,7 @@ func (s *Service) Run(runID uuid.UUID, content string, hosts []*models.Host, che
 	// the runner stops working promptly (the KRL converges to hosts via the
 	// periodic reconcile). Host scoping already bounds it to this run's targets.
 	defer func() {
-		rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 		defer rcancel()
 		if err := s.store.RevokeCertificate(rctx, mat.Serial, "playbook_run_complete"); err != nil {
 			s.log.Warn("revoke run credential", "err", err, "serial", mat.Serial)
@@ -320,6 +319,7 @@ func (s *Service) Run(runID uuid.UUID, content string, hosts []*models.Host, che
 			return pin.KeyLine, true
 		}, s.cfg.JumpHost, hosts),
 	}
+	//nolint:gosec // PrivateKey is the per-run vault SSH key deliberately sent to the ansible-runner (internal network, token-authenticated) so it can drive the run
 	body, _ := json.Marshal(reqBody)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/run", bytes.NewReader(body))
@@ -397,7 +397,7 @@ func (s *Service) Run(runID uuid.UUID, content string, hosts []*models.Host, che
 		errMsg = fmt.Sprintf("ansible-playbook exited %d", *exitCode)
 	}
 
-	pctx, pcancel := context.WithTimeout(context.Background(), 15*time.Second)
+	pctx, pcancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
 	defer pcancel()
 	if err := s.store.CompletePlaybookRun(pctx, runID, status, live.snapshot(), exitCode, errMsg); err != nil {
 		s.log.Error("playbook run: persist result", "err", err, "run", runID)
@@ -408,7 +408,7 @@ func (s *Service) Run(runID uuid.UUID, content string, hosts []*models.Host, che
 		for _, h := range hosts {
 			names = append(names, h.Hostname)
 		}
-		s.nfy.Notify(context.Background(), notify.Event{
+		s.nfy.Notify(context.WithoutCancel(parent), notify.Event{
 			Type: notify.EventPlaybookFailed, Severity: notify.SeverityError,
 			Title: "Playbook run failed",
 			Body:  fmt.Sprintf("A playbook run against %s failed: %s", strings.Join(names, ", "), errMsg),

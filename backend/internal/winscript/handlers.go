@@ -1,6 +1,7 @@
 package winscript
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -287,7 +288,7 @@ func (h *handler) run(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create run")
 		return
 	}
-	go h.svc.Run(rec.ID, sc.Content, hosts, &p.UserID)
+	go h.svc.Run(context.WithoutCancel(r.Context()), rec.ID, sc.Content, hosts, &p.UserID)
 
 	names := make([]string, 0, len(hosts))
 	for _, hh := range hosts {

@@ -1,50 +1,72 @@
-# golangci-lint configuration for the Fleet Terminal backend.
-#
-# An enterprise-reasonable baseline: correctness linters that catch real bugs,
-# plus gosec for a security-focused platform. Style-only nits are left off so
-# the gate stays about defects rather than taste. Run locally with:
-#
-#   cd backend && golangci-lint run
-#
-# CI runs this non-blocking initially (continue-on-error) — see .github/workflows/ci.yml.
-
+version: "2"
 run:
-  timeout: 10m
   tests: true
-
 linters:
-  # Start from a curated set rather than defaults so the list is explicit.
-  disable-all: true
+  default: none
   enable:
-    - govet        # suspicious constructs the compiler allows
-    - staticcheck  # the staticcheck SA/ST/QF checks (also our standalone job)
-    - errcheck     # unchecked errors — important for a PAM/audit codebase
-    - ineffassign  # assignments never read
-    - unused       # unused code
-    - gosec        # security issues (crypto, injection, file perms, etc.)
-
-linters-settings:
-  gosec:
-    excludes:
-      # G104 overlaps errcheck; let errcheck own unchecked-error reporting.
-      - G104
-  staticcheck:
-    checks:
-      - all
-
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      # Deferred rollback/close whose error is intentionally ignored is an accepted
+      # Go idiom (a Rollback after a successful Commit is a no-op returning ErrTxDone).
+      exclude-functions:
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+        - (github.com/jackc/pgx/v5.Rows).Close
+    gosec:
+      excludes:
+        # G104 overlaps errcheck; let errcheck own unchecked-error reporting.
+        - G104
+        # G115 (int-overflow on conversions) is overwhelmingly false-positive in Go
+        # and fires on every env-sized int->int32/int64 conversion.
+        - G115
+        # gosec's experimental taint-analysis rules (SSRF/path-traversal/XSS/open-
+        # redirect) are high-false-positive, and these exact categories already had a
+        # dedicated deep security-review pass (SSRF guard, path validation, XSS-safe
+        # rendering, SAML relay-state checks). Kept out of the CI gate as noise.
+        - G703
+        - G704
+        - G705
+        - G710
+    staticcheck:
+      # Defect-focused (this gate is about bugs, not taste): keep the SA analysis
+      # checks, drop the ST style and QF quickfix suggestions.
+      checks:
+        - all
+        - -ST*
+        - -QF*
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+          - gosec
+        path: _test\.go
+      - linters:
+          - gosec
+          - staticcheck
+          - unused
+        path: (^|/)(mocks?|generated|.*\.gen)\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  # Don't cap findings — a truncated report hides work.
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    # Test files legitimately ignore errors and use weak randomness for fixtures.
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-    # Generated code should not be linted for style/security we don't control.
-    - path: (^|/)(mocks?|generated|.*\.gen)\.go
-      linters:
-        - gosec
-        - staticcheck
-        - unused
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

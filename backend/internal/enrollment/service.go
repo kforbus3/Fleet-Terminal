@@ -1520,7 +1520,8 @@ func splitHostPort(hp string, def int) (string, int) {
 		return hp, def
 	}
 	p := def
-	fmt.Sscanf(port, "%d", &p)
+	// On a parse failure p keeps the default port, which is the intended fallback.
+	_, _ = fmt.Sscanf(port, "%d", &p)
 	return host, p
 }
 

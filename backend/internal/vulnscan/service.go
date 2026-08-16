@@ -68,11 +68,11 @@ func New(st *store.Store, cfg *config.Config, log *slog.Logger, gw *sshgw.Gatewa
 
 // Run performs a scan in the background: collect package DBs over SSH, hand them
 // to the sidecar, store the findings. Marks the scan failed on any error.
-func (s *Service) Run(scanID uuid.UUID, h *models.Host) {
+func (s *Service) Run(parent context.Context, scanID uuid.UUID, h *models.Host) {
 	// Cover SSH collection plus the (possibly queued) grype-scanner request. A small
 	// margin over the HTTP client timeout so the client timeout surfaces first with a
 	// clearer "scanner unreachable" message rather than a bare context cancellation.
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.VulnScanTimeout+2*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, s.cfg.VulnScanTimeout+2*time.Minute)
 	defer cancel()
 	fail := func(msg string) {
 		s.log.Warn("vuln scan failed", "host", h.Hostname, "err", msg)

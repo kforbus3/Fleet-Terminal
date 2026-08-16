@@ -182,6 +182,7 @@ func randToken() string {
 }
 
 func (h *Handler) setOIDCCookie(w http.ResponseWriter, name, val string) {
+	//nolint:gosec // OAuth state/nonce/PKCE cookie: SameSite=Lax is required so it survives the cross-site redirect back from the IdP; HttpOnly set, Secure deployment-controlled.
 	http.SetCookie(w, &http.Cookie{
 		Name: name, Value: val, Path: "/", HttpOnly: true,
 		Secure: h.svc.cfg.CookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: 300,
@@ -340,7 +341,11 @@ func (h *Handler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clear the transient flow cookies.
 	for _, n := range []string{"oidc_state", "oidc_nonce", "oidc_verifier"} {
-		http.SetCookie(w, &http.Cookie{Name: n, Path: "/", MaxAge: -1})
+		//nolint:gosec // deletion cookie (MaxAge<0) for the transient OAuth flow cookies; carries matching HttpOnly/SameSite, Secure deployment-controlled.
+		http.SetCookie(w, &http.Cookie{
+			Name: n, Path: "/", MaxAge: -1,
+			HttpOnly: true, Secure: h.svc.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+		})
 	}
 	h.setAuthCookies(w, tokens)
 	_ = h.svc.store.RecordAuthEvent(ctx, models.AuthEvent{

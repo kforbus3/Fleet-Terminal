@@ -147,6 +147,7 @@ func applyEntityNames(events []models.AuditEvent, resolve func(string) string) {
 		for k, v := range events[i].Detail {
 			if s, ok := v.(string); ok {
 				if n := resolve(s); n != "" {
+					//nolint:gosec // i is the index from `for i := range events`, always in bounds; Detail[k] is a map write to an existing key
 					events[i].Detail[k] = n
 				}
 			}

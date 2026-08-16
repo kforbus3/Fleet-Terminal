@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -153,7 +154,7 @@ func (h *handler) run(w http.ResponseWriter, r *http.Request) {
 	// Same tier as a terminal: without Host.Sudo the run lands in the host's
 	// login-only account instead of the privileged one.
 	sudo := p.IsSuperAdmin || p.Has("Host.Sudo")
-	go h.svc.Run(rec.ID, rq.Command, hosts, p.UserID, p.Username, sudo)
+	go h.svc.Run(context.WithoutCancel(r.Context()), rec.ID, rq.Command, hosts, p.UserID, p.Username, sudo)
 
 	names := make([]string, 0, len(hosts))
 	for _, hh := range hosts {

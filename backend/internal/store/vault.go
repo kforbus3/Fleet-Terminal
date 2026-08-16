@@ -64,6 +64,7 @@ func (in VaultSecretInput) accessPolicy() string {
 	}
 }
 
+//nolint:gosec // not a credential: SQL column-list for SELECTing secret metadata rows (no secret values)
 const vaultSecretCols = `s.id, s.name, s.folder, s.type, s.username, s.target, s.description, s.access_policy, s.version,
 	COALESCE(u.username,''), s.created_at, s.updated_at, s.rotation_interval_days, s.last_rotated_at, s.next_rotation_at,
 	s.external_provider, s.external_ref`

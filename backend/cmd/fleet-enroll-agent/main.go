@@ -68,6 +68,7 @@ func run() error {
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	if *insecure {
+		//nolint:gosec // guarded by the operator-only -insecure dev flag (default false); refused in FIPS mode above
 		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}
 	}
 
@@ -102,6 +103,7 @@ func run() error {
 	}
 	dialer := *websocket.DefaultDialer
 	if *insecure {
+		//nolint:gosec // guarded by the operator-only -insecure dev flag (default false); refused in FIPS mode above
 		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}
 	}
 	ws, resp, err := dialer.Dial(wsURL, nil)
