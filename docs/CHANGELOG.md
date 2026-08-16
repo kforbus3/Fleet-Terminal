@@ -5,6 +5,55 @@ schema migrations apply automatically on startup; deploy notes call out anything
 
 ---
 
+## v2.0.0 — Moorgate — 2026-08-16
+
+The product is now **Moorgate**. Alongside the rename, this release closes every
+blocker and security finding from the enterprise-readiness audit and adds the
+hardening an enterprise deployment expects. It is the first release verified by
+deploying the Helm chart to a real Kubernetes cluster, not just by rendering it.
+
+**Action required for existing production deployments.** Two new secrets are
+**required** in production and the backend fails closed at boot without them. Set
+both before upgrading (generate each with `openssl rand -hex 32`):
+
+- `FLEET_AUDIT_HMAC_KEY` (≥32 bytes) — keys the tamper-evident audit chain.
+- `FLEET_ANSIBLE_RUNNER_TOKEN` (≥16 bytes) — authenticates the backend to the
+  ansible-runner sidecar; set the same value on both.
+
+Optional but recommended: `FLEET_RECORDING_KEY` (≥32 bytes) encrypts session
+recordings at rest. The `FLEET_*` variable names, the `fleetd`/`fleetctl`/`fleet`
+binaries, and the `.fleetup` bundle format are unchanged, so nothing else about an
+existing deployment moves.
+
+**Security.** Closed an LDAP account-takeover (a directory identity can no longer
+bind onto a local-password account or the bootstrap super-admin). The audit log is
+now HMAC-keyed and tamper-evident, binding sequence, timestamp, and tenant.
+Multi-tenancy row-level security now covers the tables it had missed, with isolation
+tests and a build-time guard against future gaps. Ansible hardening: the
+inventory-injection RCE is closed, SSH host-key verification is restored, and the
+backend authenticates to the runner. CSRF is enforced, HSTS and security headers and
+WebSocket-Origin checks are added, session-watch is tenant-scoped, ABAC fails closed,
+and the SSRF guard pins the validated IP at dial time. SAML Single Logout (SP- and
+IdP-initiated) with an SP signing-key surface; session recordings (SSH and RDP) can
+be encrypted at rest; SIEM forwarding gains TLS, auth, and a bounded retry queue.
+
+**Scale.** Overlay addressing follows the configured subnet — a `/16`
+(`FLEET_WG_SUBNET`) lifts the old ~240-host ceiling to tens of thousands — and
+allocation is race-safe. The host-list query is no longer N+1 (401 → 5 queries per
+100 hosts), and the monitor sweep uses an adaptive cadence with configurable
+concurrency.
+
+**Deployment.** The default Kubernetes/Helm deploy now works, verified on a real
+cluster: the backend runs unprivileged under `runAsNonRoot`, the frontend proxies to
+the in-cluster backend Service, containers run read-only-root with the writable
+mounts they need, and the chart ships all required secrets. A tag-triggered release
+pipeline publishes signed container images to GHCR with SBOM attestations.
+
+**Tooling & docs.** Go toolchain and vulnerable dependencies bumped (govulncheck
+clean); `golangci-lint` and frontend `eslint` are now blocking, clean CI gates. The
+documentation, the in-app help, and the Ask assistant's knowledge are updated for the
+rename, the new configuration, and the new features.
+
 ---
 
 ## v1.6.1 — A fleet-wide upgrade could not finish inside its own budget — 2026-08-15

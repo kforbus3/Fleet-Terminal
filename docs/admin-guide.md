@@ -36,8 +36,14 @@ Set these in `.env` (generate with `openssl rand -hex 32`). In `production`
 | `FLEET_JWT_SECRET` | ≥ 32 bytes — signs access tokens |
 | `FLEET_CSRF_SECRET` | ≥ 16 bytes — CSRF double-submit |
 | `FLEET_CA_PASSPHRASE` | ≥ 16 bytes — encrypts the CA private key at rest |
+| `FLEET_AUDIT_HMAC_KEY` | ≥ 32 bytes — keys the tamper-evident audit chain |
+| `FLEET_ANSIBLE_RUNNER_TOKEN` | ≥ 16 bytes — backend ⇄ `ansible-runner` shared secret (**must match** on the sidecar) |
 | `FLEET_COOKIE_SECURE` | `true` when served over HTTPS |
 | `FLEET_PUBLIC_URL` | your external base URL (cookies/CORS) |
+
+`FLEET_RECORDING_KEY` (≥ 32 bytes, **optional**) additionally encrypts session
+recordings at rest — see [§18c](#18c-windows-desktops-rdp) and the
+[Security Guide](./security-guide.md).
 
 ## 2. Bootstrap the first administrator
 
@@ -549,6 +555,13 @@ Then configure the IdP side in Moorgate:
 - **IdP Entity ID (issuer)**, **IdP SSO URL** (HTTP-Redirect binding), and the
   **IdP signing certificate** (PEM or base64 — public, used to verify assertion
   signatures).
+- **IdP SLO URL** (optional) — the IdP's Single Logout endpoint, needed for SLO
+  (below).
+- **SP signing key** (optional) — an **SP certificate** + **private key** (PEM).
+  When set, Moorgate signs its SLO `LogoutRequest`/`LogoutResponse` messages (and
+  can sign AuthnRequests) with it, and publishes the certificate in its SP
+  metadata so the IdP can verify them. Leave blank to run without an SP key
+  (unsigned AuthnRequests / local-only logout).
 - **Attribute mapping**: username (blank = use the assertion **NameID**), email,
   display-name, and groups attributes.
 - **Default role**, the **auto-provision** toggle, **group → role mappings**, and
@@ -568,11 +581,35 @@ sent **unsigned** (baseline); the IdP must sign its assertions.
 > account already exists (created by an admin or by **SCIM**, below). This is the
 > tighter posture: no account exists until the IdP explicitly provisions it.
 
+#### Single Logout (SLO)
+
+SAML Single Logout ends the session at the IdP as well as in Moorgate, so a logout
+propagates across all apps federated to that IdP. Both directions are supported:
+
+- **SP-initiated** — the user logs out of Moorgate; Moorgate sends a signed
+  `LogoutRequest` to the IdP's **SLO URL** and processes the returned
+  `LogoutResponse`.
+- **IdP-initiated** — the IdP (or another SP) POSTs a `LogoutRequest` to Moorgate's
+  SLO endpoint; Moorgate ends the local session and replies with a signed
+  `LogoutResponse`.
+
+SLO requires an **SP signing key** (the SP certificate + private key above) so
+Moorgate can sign its logout messages, and the **IdP SLO URL** so it knows where
+to send them. Configure both on the IdP side too (register Moorgate's SP metadata,
+which now advertises the SLO endpoint and the SP certificate).
+
+**Local logout is always guaranteed.** Clearing the Moorgate session never depends
+on the IdP: if **no SP signing key** is configured, or the IdP exposes **no SLO
+endpoint**, or the SLO exchange fails, Moorgate **falls back to a local-only
+logout** — the user is signed out of Moorgate immediately, and only the IdP-side
+global logout is skipped.
+
 | Action | Endpoint |
 |--------|----------|
 | Read / save SAML config | `GET/PUT /api/v1/auth/saml/config` (`System.Configure`) |
 | Provider status (drives the button) | `GET /api/v1/auth/saml/status` |
 | Begin login / ACS / metadata | `GET /api/v1/auth/saml/login`, `POST /api/v1/auth/saml/acs`, `GET /api/v1/auth/saml/metadata` |
+| Single Logout (SP- and IdP-initiated) | `GET/POST /api/v1/auth/saml/slo` |
 
 ### SCIM 2.0 provisioning (lifecycle automation)
 
@@ -830,8 +867,11 @@ Guacamole recording to the shared `recordings` volume (under
 back for replay. Watch recordings under **Session Replay → Desktop (RDP)** — a
 built-in player with play/pause and a seek bar, gated by `Session.Replay`. Deleting or
 pruning RDP recordings needs `System.Configure`; they share the same retention window
-as SSH recordings (Settings → retention, or the retention job). Clipboard, drive
-redirection, and multi-monitor for RDP are not in this release.
+as SSH recordings (Settings → retention, or the retention job). Like SSH recordings,
+RDP recordings are **encrypted at rest when `FLEET_RECORDING_KEY` is set** — because
+guacd owns the live write path, an RDP recording is **finalized-encrypted when the
+session ends** (SSH recordings are encrypted as they are written). See the
+[Security Guide](./security-guide.md).
 
 **Host facts (WinRM).** Windows hosts have no SSH, so their OS/CPU/memory/uptime are
 collected over **WinRM (PowerShell remoting)** instead — the monitor authenticates with

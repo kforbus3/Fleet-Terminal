@@ -275,10 +275,13 @@ responses, request decoding, ID parsing, and best-effort audit writes.
   Every route is wrapped with `RequireAuth` + `RequirePermission("<Perm>")`;
   frontend permission checks are advisory. `Admin.All` is treated as a wildcard.
 
-- **Hash-chained, tamper-evident audit.** Every state change appends a row to
-  `audit_events` where `hash = H(prev_hash || canonical(event))`. The chain can
-  be verified end-to-end via `GET /api/v1/audit/verify`, which returns the first
-  broken sequence number if the chain has been altered. See the
+- **HMAC-keyed, tamper-evident audit.** Every state change appends a row to
+  `audit_events` where `hash = HMAC(FLEET_AUDIT_HMAC_KEY, prev_hash ||
+  canonical(event))`, binding each event's sequence, timestamp, and tenant. Keying
+  the chain (rather than a plain hash) makes it tamper-evident against an attacker
+  who can write the table: without the key they cannot recompute a consistent
+  chain. The chain can be verified end-to-end via `GET /api/v1/audit/verify`, which
+  returns the first broken sequence number if the chain has been altered. See the
   [Security Guide](./security-guide.md).
 
 - **Defense in depth at the edge.** Access tokens are HMAC-signed JWTs; refresh
@@ -290,6 +293,22 @@ responses, request decoding, ID parsing, and best-effort audit writes.
 - **Network isolation.** Managed hosts are never exposed directly. All SSH egress
   flows through the Jump Host and a WireGuard tunnel mesh, so the only inbound
   surface a managed host needs is the WireGuard endpoint.
+
+## Scale & capacity
+
+The design is single-app-stack by default and scales along two well-understood axes:
+
+- **Fleet size.** The default configuration comfortably manages **hundreds of
+  hosts**. Reaching **thousands** requires a **wider WireGuard overlay subnet**
+  (`FLEET_WG_SUBNET`, e.g. a `/16` instead of the default) so the address pool
+  isn't exhausted, and a higher `FLEET_MONITOR_CONCURRENCY` so health checks keep
+  pace — kept **below the jump host's sshd `MaxStartups`** so probes aren't
+  throttled. Size the subnet before enrolling at scale; it is fixed once the pool
+  exists. See [deployment.md](./deployment.md).
+- **Throughput / availability.** The backend is stateless apart from Postgres and
+  the on-disk recording/scan/backup volume, so it scales horizontally behind a
+  load balancer. See [high-availability.md](./high-availability.md) and the Helm
+  chart (`deploy/helm/moorgate`) for a multi-replica reference.
 
 See [database.md](./database.md) for the full schema and [api.md](./api.md) for
 the endpoint reference.

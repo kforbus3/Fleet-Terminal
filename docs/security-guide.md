@@ -56,11 +56,20 @@ and operational recommendations.
   the previous CA is retired (`ca_keys.retired_at`) but kept for verification of
   already-issued certs. See [certificate-lifecycle.md](./certificate-lifecycle.md).
 
-## 3. Hash-chained, tamper-evident audit
+## 3. HMAC-keyed, tamper-evident audit
 
 - Every state change appends a row to `audit_events` where
-  `hash = H(prev_hash || canonical(event))`, forming an append-only chain ordered
-  by `seq`.
+  `hash = HMAC(FLEET_AUDIT_HMAC_KEY, prev_hash || canonical(event))`, forming an
+  append-only chain ordered by `seq`. The canonical event binds the row's
+  **sequence, timestamp, and tenant** so none can be altered or reordered without
+  breaking the chain.
+- **The chain is keyed.** `FLEET_AUDIT_HMAC_KEY` (≥32 bytes, **required in
+  production** — the backend fails closed at boot without it) is what makes the
+  chain *tamper-evident* rather than merely tamper-detecting: an attacker with
+  write access to the database cannot forge a self-consistent chain without the
+  key. Generate it with `openssl rand -hex 32` and keep it off-host with the other
+  secrets. Without the key the chain would be unauthenticated. See
+  [deployment.md](./deployment.md).
 - `actor_name` is denormalized so accountability survives user deletion.
 - **Verify integrity** with `GET /api/v1/audit/verify` →
   `{"intact": true, "brokenAtSeq": 0}`. A non-zero `brokenAtSeq` pinpoints the
@@ -444,9 +453,34 @@ control channel:
 - Requires `Session.Watch` (seeded to Super Administrator, Administrator, Auditor).
   It is distinct from — and complements — after-the-fact recording/replay.
 
+## 17. Session-recording encryption at rest
+
+Terminal and desktop sessions are recorded for after-the-fact replay. Set
+**`FLEET_RECORDING_KEY`** (≥32 bytes, `openssl rand -hex 32`) to encrypt those
+recordings **at rest with AES-256-GCM**. One key covers **both** recording types:
+
+- **SSH sessions** — the asciicast stream the backend writes.
+- **RDP / Windows desktop sessions** — the Guacamole recording. Because **guacd
+  owns the live write path**, an RDP recording is written by guacd during the
+  session and **finalized-encrypted at session end** by the backend (rather than
+  streamed encrypted). SSH recordings are encrypted as they are written.
+
+Notes:
+
+- The key is **optional but recommended**; the backend **logs a warning at boot
+  when it is unset** and stores recordings in plaintext.
+- Enabling the key encrypts only **new** recordings. **Existing plaintext
+  recordings still play** — replay transparently handles both encrypted and
+  plaintext files, so you can turn encryption on without a migration.
+- Losing the key makes encrypted recordings **unrecoverable**. Keep it off-host
+  with the other production secrets, and include it in your backup/DR material.
+
 ## Security checklist (production)
 
 - [ ] Strong `FLEET_JWT_SECRET`, `FLEET_CSRF_SECRET`, `FLEET_CA_PASSPHRASE` set.
+- [ ] `FLEET_AUDIT_HMAC_KEY` and `FLEET_ANSIBLE_RUNNER_TOKEN` set (both required in
+      production; backend fails closed without them). `FLEET_RECORDING_KEY` set to
+      encrypt session recordings at rest.
 - [ ] `FLEET_ENV=production`, `FLEET_COOKIE_SECURE=true`, TLS at the edge.
 - [ ] `FLEET_ALLOW_BOOTSTRAP=false` after initial setup.
 - [ ] **Require MFA** globally (or per user); prefer passkeys.
