@@ -15,8 +15,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
 )
 
 // osTokenRe guards the OS id/version tokens we interpolate into a filename and a

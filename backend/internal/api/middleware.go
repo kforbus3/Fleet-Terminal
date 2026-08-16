@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/fleet-terminal/backend/internal/auth"
-	"github.com/fleet-terminal/backend/internal/httpx"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/httpx"
 )
 
 // csrfProtect enforces double-submit CSRF validation on cookie-authenticated,

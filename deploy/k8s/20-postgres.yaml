@@ -1,4 +1,4 @@
-# PostgreSQL — stateful primary for Fleet Terminal.
+# PostgreSQL — stateful primary for Moorgate.
 # Single-replica StatefulSet with a PVC template; for HA swap in an operator
 # (CloudNativePG / Zalando) but the app only needs one writable endpoint.
 apiVersion: v1

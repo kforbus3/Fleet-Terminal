@@ -1,4 +1,4 @@
-module github.com/fleet-terminal/backend
+module github.com/kforbus3/Moorgate/backend
 
 go 1.25.0
 

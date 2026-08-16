@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fleet-terminal/backend/internal/extsecret"
-	"github.com/fleet-terminal/backend/internal/kms"
+	"github.com/kforbus3/Moorgate/backend/internal/extsecret"
+	"github.com/kforbus3/Moorgate/backend/internal/kms"
 )
 
 // Config is the fully-resolved application configuration.
@@ -517,7 +517,7 @@ func Load() (*Config, error) {
 
 	// WebAuthn: derive sensible localhost defaults from the public URL.
 	c.WebAuthnRPID = env("FLEET_WEBAUTHN_RPID", hostOnly(c.PublicURL))
-	c.WebAuthnRPName = env("FLEET_WEBAUTHN_RP_NAME", "Fleet Terminal")
+	c.WebAuthnRPName = env("FLEET_WEBAUTHN_RP_NAME", "Moorgate")
 	if origins := env("FLEET_WEBAUTHN_ORIGINS", ""); origins != "" {
 		c.WebAuthnOrigins = strings.Split(origins, ",")
 	} else {

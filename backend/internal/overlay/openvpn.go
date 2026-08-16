@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/config"
-	"github.com/fleet-terminal/backend/internal/overlaypki"
+	"github.com/kforbus3/Moorgate/backend/internal/config"
+	"github.com/kforbus3/Moorgate/backend/internal/overlaypki"
 )
 
 // clientCertTTL is a managed host's OpenVPN client-cert lifetime. Long-lived (the

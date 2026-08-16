@@ -1,4 +1,4 @@
-# Fleet Terminal — Deployment Guide
+# Moorgate — Deployment Guide
 
 How to stand up the **entire system**: the application stack (backend, frontend,
 PostgreSQL, Redis), the SSH egress path (jump host + WireGuard), and the
@@ -186,7 +186,7 @@ The bundled jump host:
 
 - **publishes** the WireGuard UDP port (`FLEET_WG_PORT`, default 51820) so remote
   managed hosts can reach it — **open that UDP port on the host firewall**;
-- **auto-trusts the Fleet CA** by polling the backend's public CA endpoint
+- **auto-trusts the Moorgate CA** by polling the backend's public CA endpoint
   (`GET /api/v1/certificates/ca/pub`) — no manual trust step, and it tracks CA
   rotation automatically;
 - **persists** its WireGuard keypair + peers (`jump_wg`) and SSH host key
@@ -201,7 +201,7 @@ default `jumphost:22`.
 > higher-security setups, keep the jump host on a separate minimal box (§5b) so
 > public WireGuard ingress isn't on the control-plane server.
 
-To manage the Fleet server itself as a host, enroll it with the **Directly
+To manage the Moorgate server itself as a host, enroll it with the **Directly
 reachable / skip WireGuard** option: a host co-located with the jump host can't run
 a second WireGuard endpoint on the jump's port, so enrollment skips the overlay and
 the gateway reaches it at its management address through the jump host (see the
@@ -216,7 +216,7 @@ make up-app      # or: docker compose --env-file .env -f deploy/compose/docker-c
 ```
 
 Set `FLEET_JUMP_HOST` / `FLEET_JUMP_USER` to your jump host, ensure it trusts the
-Fleet CA (`GET /api/v1/certificates/ca/pub`) and runs WireGuard on
+Moorgate CA (`GET /api/v1/certificates/ca/pub`) and runs WireGuard on
 `FLEET_WG_JUMP_ENDPOINT`. See §6.
 
 ### Other deployment targets
@@ -231,7 +231,7 @@ environments. They consume the same environment variables described above.
 
 The jump host is the single egress point. It must:
 
-- run OpenSSH and **trust the Fleet CA** (so the backend can SSH in with its
+- run OpenSSH and **trust the Moorgate CA** (so the backend can SSH in with its
   system certificate) — `FLEET_JUMP_USER` maps to the `fleet` principal;
 - run WireGuard as the overlay server on `FLEET_WG_PORT`, with its public key
   readable at `/etc/wireguard/publickey`;

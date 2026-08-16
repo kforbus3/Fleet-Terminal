@@ -1,5 +1,5 @@
 [Unit]
-Description=Fleet Terminal backend (fleetd) — browser-based SSH PAM gateway
+Description=Moorgate backend (fleetd) — browser-based SSH PAM gateway
 Documentation=https://github.com/kforbus3/Fleet-Terminal
 After=network-online.target
 Wants=network-online.target

@@ -1,8 +1,8 @@
-# Fleet Terminal
+# Moorgate
 
 **Browser-based Privileged Access Management (PAM) for Linux fleets.**
 
-Fleet Terminal gives operators secure, audited SSH access to Linux fleets **from the
+Moorgate gives operators secure, audited SSH access to Linux fleets **from the
 browser** — hundreds of hosts on the default configuration, scaling to thousands with a
 wider overlay subnet (`FLEET_WG_SUBNET`) and tuned monitor concurrency — with no SSH
 client, VPN, WireGuard, keys, or
@@ -110,7 +110,7 @@ Working and verified end-to-end (see `git log` for the milestone history):
 - Host inventory + **quick-connect Terminals launcher** with **group filter** and **per-host
   pending package updates**; **enroll hosts five ways** — SSH password, SSH private key,
   **forwarded SSH agent** (key stays local), a **no-install ssh-pipe** script, or a **direct
-  "skip-WireGuard" host** (for hosts on the jump host's LAN or the box running Fleet itself).
+  "skip-WireGuard" host** (for hosts on the jump host's LAN or the box running Moorgate itself).
   WireGuard-routed methods install CA trust + WireGuard and verify per-user cert login
 - Internal SSH **CA + ephemeral certificates, unique per (user, host)** (in-RAM keys, 7-day,
   auto-renew, revoke via distributed KRL)

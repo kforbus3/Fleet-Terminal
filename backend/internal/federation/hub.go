@@ -16,14 +16,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"github.com/fleet-terminal/backend/internal/auth"
-	"github.com/fleet-terminal/backend/internal/federation/fedauth"
-	"github.com/fleet-terminal/backend/internal/federation/keys"
-	fedlink "github.com/fleet-terminal/backend/internal/federation/link"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/store"
-	"github.com/fleet-terminal/backend/internal/tenant"
-	"github.com/fleet-terminal/backend/internal/wsorigin"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/federation/fedauth"
+	"github.com/kforbus3/Moorgate/backend/internal/federation/keys"
+	fedlink "github.com/kforbus3/Moorgate/backend/internal/federation/link"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/tenant"
+	"github.com/kforbus3/Moorgate/backend/internal/wsorigin"
 )
 
 var upgrader = websocket.Upgrader{

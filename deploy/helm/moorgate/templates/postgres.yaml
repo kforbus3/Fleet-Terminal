@@ -2,14 +2,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "fleet-terminal.postgres.fullname" . }}
+  name: {{ include "moorgate.postgres.fullname" . }}
   labels:
-    {{- include "fleet-terminal.labels" . | nindent 4 }}
+    {{- include "moorgate.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
 spec:
   clusterIP: None
   selector:
-    {{- include "fleet-terminal.selectorLabels" (dict "context" . "component" "postgres") | nindent 4 }}
+    {{- include "moorgate.selectorLabels" (dict "context" . "component" "postgres") | nindent 4 }}
   ports:
     - name: postgres
       port: 5432
@@ -18,20 +18,20 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "fleet-terminal.postgres.fullname" . }}
+  name: {{ include "moorgate.postgres.fullname" . }}
   labels:
-    {{- include "fleet-terminal.labels" . | nindent 4 }}
+    {{- include "moorgate.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
 spec:
-  serviceName: {{ include "fleet-terminal.postgres.fullname" . }}
+  serviceName: {{ include "moorgate.postgres.fullname" . }}
   replicas: 1
   selector:
     matchLabels:
-      {{- include "fleet-terminal.selectorLabels" (dict "context" . "component" "postgres") | nindent 6 }}
+      {{- include "moorgate.selectorLabels" (dict "context" . "component" "postgres") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "fleet-terminal.labels" . | nindent 8 }}
+        {{- include "moorgate.labels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
     spec:
       {{- with .Values.imagePullSecrets }}
@@ -62,7 +62,7 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "fleet-terminal.secretName" . }}
+                  name: {{ include "moorgate.secretName" . }}
                   key: POSTGRES_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata

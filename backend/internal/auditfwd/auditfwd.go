@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/ssrf"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/ssrf"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 const settingKey = "audit_forward"

@@ -15,18 +15,18 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/fleet-terminal/backend/internal/config"
-	"github.com/fleet-terminal/backend/internal/credinject"
-	"github.com/fleet-terminal/backend/internal/identity"
-	"github.com/fleet-terminal/backend/internal/jobs"
-	"github.com/fleet-terminal/backend/internal/metrics"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/notify"
-	"github.com/fleet-terminal/backend/internal/overlay"
-	"github.com/fleet-terminal/backend/internal/sshgw"
-	"github.com/fleet-terminal/backend/internal/store"
-	"github.com/fleet-terminal/backend/internal/winrm"
-	"github.com/fleet-terminal/backend/internal/ws"
+	"github.com/kforbus3/Moorgate/backend/internal/config"
+	"github.com/kforbus3/Moorgate/backend/internal/credinject"
+	"github.com/kforbus3/Moorgate/backend/internal/identity"
+	"github.com/kforbus3/Moorgate/backend/internal/jobs"
+	"github.com/kforbus3/Moorgate/backend/internal/metrics"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/notify"
+	"github.com/kforbus3/Moorgate/backend/internal/overlay"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/winrm"
+	"github.com/kforbus3/Moorgate/backend/internal/ws"
 )
 
 // Monitor periodically probes hosts and reports their health.

@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 // fakeStore is a policyStore whose policy load can be made to fail, and which counts

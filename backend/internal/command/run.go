@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/fleet-terminal/backend/internal/commandpolicy"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/notify"
-	"github.com/fleet-terminal/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/commandpolicy"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/notify"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
 )
 
 const (

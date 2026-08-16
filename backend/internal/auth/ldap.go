@@ -10,9 +10,9 @@ import (
 
 	ldap "github.com/go-ldap/ldap/v3"
 
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/secretbox"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/secretbox"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 const ldapSettingKey = "ldap"

@@ -1,4 +1,4 @@
-module github.com/kforbus3/Fleet-Terminal/sdk
+module github.com/kforbus3/Moorgate/sdk
 
 go 1.23.0
 

@@ -15,11 +15,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/credinject"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/notify"
-	princ "github.com/fleet-terminal/backend/internal/principals"
-	"github.com/fleet-terminal/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/credinject"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/notify"
+	princ "github.com/kforbus3/Moorgate/backend/internal/principals"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
 )
 
 const (

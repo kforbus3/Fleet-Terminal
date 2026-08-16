@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
 )
 
 // VaultVersionSeal is one sealed vault-secret version, for the FIPS re-seal sweep.

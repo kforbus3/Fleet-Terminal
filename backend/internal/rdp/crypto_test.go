@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fleet-terminal/backend/internal/recorder"
+	"github.com/kforbus3/Moorgate/backend/internal/recorder"
 )
 
 // A representative slice of a guacd Guacamole session recording (length-prefixed

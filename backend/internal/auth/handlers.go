@@ -9,8 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 // Handler exposes auth HTTP endpoints.
@@ -154,7 +154,7 @@ func (h *Handler) mfaSetupBegin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "account unavailable")
 		return
 	}
-	secret, url, err := GenerateTOTP("Fleet Terminal", u.Username)
+	secret, url, err := GenerateTOTP("Moorgate", u.Username)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not generate secret")
 		return
@@ -456,7 +456,7 @@ func (h *Handler) mfaList(w http.ResponseWriter, r *http.Request) {
 // mfaEnroll generates a new TOTP secret and stores it as pending (unconfirmed).
 func (h *Handler) mfaEnroll(w http.ResponseWriter, r *http.Request) {
 	p := MustPrincipal(r)
-	secret, url, err := GenerateTOTP("Fleet Terminal", p.Username)
+	secret, url, err := GenerateTOTP("Moorgate", p.Username)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not generate secret")
 		return

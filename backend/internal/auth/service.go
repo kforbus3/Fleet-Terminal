@@ -13,9 +13,9 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/config"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/config"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 // Common authentication errors surfaced to handlers.

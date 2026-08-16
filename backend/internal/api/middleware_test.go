@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/fleet-terminal/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
 )
 
 func TestCSRFProtect(t *testing.T) {

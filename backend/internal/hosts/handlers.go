@@ -1,5 +1,5 @@
 // Package hosts provides host inventory CRUD and serves as the canonical example
-// of a Fleet Terminal HTTP module: construct from *app.Deps, gate every route
+// of a Moorgate HTTP module: construct from *app.Deps, gate every route
 // with auth + RBAC middleware, and audit state changes.
 package hosts
 
@@ -14,12 +14,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/app"
-	"github.com/fleet-terminal/backend/internal/auth"
-	"github.com/fleet-terminal/backend/internal/httpx"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/sshgw"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/app"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/httpx"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 // Mount attaches host routes to r, gated by authentication and permissions.

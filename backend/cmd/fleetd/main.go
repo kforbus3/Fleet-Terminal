@@ -1,4 +1,4 @@
-// Command fleetd is the Fleet Terminal API server and SSH gateway.
+// Command fleetd is the Moorgate API server and SSH gateway.
 package main
 
 import (
@@ -19,14 +19,14 @@ import (
 	// resolves zones for schedule computation, even without an OS tzdata package.
 	_ "time/tzdata"
 
-	"github.com/fleet-terminal/backend/internal/api"
-	"github.com/fleet-terminal/backend/internal/auth"
-	"github.com/fleet-terminal/backend/internal/config"
-	"github.com/fleet-terminal/backend/internal/cryptoprofile"
-	"github.com/fleet-terminal/backend/internal/db"
-	"github.com/fleet-terminal/backend/internal/secretbox"
-	"github.com/fleet-terminal/backend/internal/telemetry"
-	"github.com/fleet-terminal/backend/internal/tenant"
+	"github.com/kforbus3/Moorgate/backend/internal/api"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/config"
+	"github.com/kforbus3/Moorgate/backend/internal/cryptoprofile"
+	"github.com/kforbus3/Moorgate/backend/internal/db"
+	"github.com/kforbus3/Moorgate/backend/internal/secretbox"
+	"github.com/kforbus3/Moorgate/backend/internal/telemetry"
+	"github.com/kforbus3/Moorgate/backend/internal/tenant"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".

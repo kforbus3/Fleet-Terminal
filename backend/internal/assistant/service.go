@@ -19,11 +19,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/aiaction"
-	"github.com/fleet-terminal/backend/internal/insights"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/store"
-	"github.com/fleet-terminal/backend/internal/tenant"
+	"github.com/kforbus3/Moorgate/backend/internal/aiaction"
+	"github.com/kforbus3/Moorgate/backend/internal/insights"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/tenant"
 )
 
 const (

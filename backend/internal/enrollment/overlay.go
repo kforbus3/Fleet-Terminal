@@ -10,9 +10,9 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/overlay"
-	"github.com/fleet-terminal/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/overlay"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
 )
 
 // enrollCertOverlay provisions a certificate-authenticated overlay (OpenVPN)

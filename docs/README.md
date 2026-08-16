@@ -1,6 +1,6 @@
-# Fleet Terminal — Documentation
+# Moorgate — Documentation
 
-Fleet Terminal is a Go + React Privileged Access Management (PAM) platform for
+Moorgate is a Go + React Privileged Access Management (PAM) platform for
 browser-based SSH: ephemeral, in-RAM SSH certificates, a hardened jump-host /
 WireGuard egress path, backend-authoritative RBAC, and a tamper-evident,
 hash-chained audit log.
@@ -22,7 +22,7 @@ the first Super Administrator. See the [Administrator Guide](./admin-guide.md).
 
 | Doc | Audience | What it covers |
 |-----|----------|----------------|
-| [installation.md](./installation.md) | operators | Install and stand up Fleet Terminal from scratch: prerequisites, config, first boot |
+| [installation.md](./installation.md) | operators | Install and stand up Moorgate from scratch: prerequisites, config, first boot |
 | [deployment.md](./deployment.md) | operators | Deploy the whole system: config, local + production stack |
 | [internet-exposure.md](./internet-exposure.md) | operators / security | Exposing the UI to the internet behind a reverse proxy + MFA |
 | [operations.md](./operations.md) | operators | Day-to-day flows: enroll, connect, transfer, approvals, MFA |
@@ -69,7 +69,7 @@ brokering:
 | Doc | Audience | What it covers |
 |-----|----------|----------------|
 | [access-policies.md](./access-policies.md) | security / admins | Attribute-based access control (ABAC) layered on RBAC to deny connections by context |
-| [automation.md](./automation.md) | integrators / operators | Driving Fleet as code with the Go SDK and the `fleet` CLI |
+| [automation.md](./automation.md) | integrators / operators | Driving Moorgate as code with the Go SDK and the `fleet` CLI |
 | [behavior-analytics.md](./behavior-analytics.md) | security | UEBA: explainable, ML-free detection of access patterns deviating from a user's baseline |
 | [database-broker.md](./database-broker.md) | operators / security | Brokered privileged access to databases with vaulted credentials, run through the jump host |
 | [kubernetes.md](./kubernetes.md) | operators / security | Brokered Kubernetes access via an authenticating proxy with a vaulted bearer token |

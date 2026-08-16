@@ -14,12 +14,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/app"
-	"github.com/fleet-terminal/backend/internal/auth"
-	"github.com/fleet-terminal/backend/internal/httpx"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/recorder"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/app"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/httpx"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/recorder"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 // Mount attaches session routes to r, gated by authentication and permissions.
@@ -170,7 +170,7 @@ func (h *handler) playerRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, _ := h.d.Store.GetSSHSession(r.Context(), id)
-	title := "Fleet Terminal session"
+	title := "Moorgate session"
 	if sess != nil {
 		title = sess.Username + "@" + sess.Hostname + " · " + sess.StartedAt.Format("2006-01-02 15:04:05")
 	}

@@ -15,14 +15,14 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/fleet-terminal/backend/internal/config"
-	"github.com/fleet-terminal/backend/internal/krl"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/overlay"
-	"github.com/fleet-terminal/backend/internal/overlaypki"
-	princ "github.com/fleet-terminal/backend/internal/principals"
-	"github.com/fleet-terminal/backend/internal/sshgw"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/config"
+	"github.com/kforbus3/Moorgate/backend/internal/krl"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/overlay"
+	"github.com/kforbus3/Moorgate/backend/internal/overlaypki"
+	princ "github.com/kforbus3/Moorgate/backend/internal/principals"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 
 	"log/slog"
 
@@ -1146,7 +1146,7 @@ LOGIN='%s'
 NOSUDO="${LOGIN}-login"
 cat > /usr/local/sbin/fleet-unenroll.sh <<'FLEETEOF'
 #!/bin/sh
-# Written by Fleet Terminal when the host was removed from its inventory.
+# Written by Moorgate when the host was removed from its inventory.
 # Removes Fleet's accounts and SSH trust, then deletes itself.
 set +e
 LOGIN="$1"

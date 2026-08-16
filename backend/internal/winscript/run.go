@@ -10,10 +10,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fleet-terminal/backend/internal/credinject"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/notify"
-	"github.com/fleet-terminal/backend/internal/winrm"
+	"github.com/kforbus3/Moorgate/backend/internal/credinject"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/notify"
+	"github.com/kforbus3/Moorgate/backend/internal/winrm"
 )
 
 const (

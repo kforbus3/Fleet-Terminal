@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fleet-terminal/backend/internal/config"
-	"github.com/fleet-terminal/backend/internal/identity"
-	"github.com/fleet-terminal/backend/internal/notify"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/config"
+	"github.com/kforbus3/Moorgate/backend/internal/identity"
+	"github.com/kforbus3/Moorgate/backend/internal/notify"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 // Service talks to the ansible-runner sidecar and orchestrates playbook runs.

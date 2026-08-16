@@ -12,11 +12,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/fleet-terminal/backend/internal/app"
-	"github.com/fleet-terminal/backend/internal/auth"
-	"github.com/fleet-terminal/backend/internal/httpx"
-	"github.com/fleet-terminal/backend/internal/jobs"
-	"github.com/fleet-terminal/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/app"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/httpx"
+	"github.com/kforbus3/Moorgate/backend/internal/jobs"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
 )
 
 // Mount attaches system routes (admin-gated).

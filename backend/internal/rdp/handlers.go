@@ -26,13 +26,13 @@ import (
 	"github.com/wwt/guac"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/fleet-terminal/backend/internal/accesspolicy"
-	"github.com/fleet-terminal/backend/internal/app"
-	"github.com/fleet-terminal/backend/internal/auth"
-	"github.com/fleet-terminal/backend/internal/credinject"
-	"github.com/fleet-terminal/backend/internal/models"
-	"github.com/fleet-terminal/backend/internal/sshgw"
-	"github.com/fleet-terminal/backend/internal/store"
+	"github.com/kforbus3/Moorgate/backend/internal/accesspolicy"
+	"github.com/kforbus3/Moorgate/backend/internal/app"
+	"github.com/kforbus3/Moorgate/backend/internal/auth"
+	"github.com/kforbus3/Moorgate/backend/internal/credinject"
+	"github.com/kforbus3/Moorgate/backend/internal/models"
+	"github.com/kforbus3/Moorgate/backend/internal/sshgw"
+	"github.com/kforbus3/Moorgate/backend/internal/store"
 )
 
 type handler struct {
